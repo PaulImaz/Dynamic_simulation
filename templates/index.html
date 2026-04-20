@@ -1,0 +1,4252 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Performance Lab</title>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    :root {
+      --bg: #000000;
+      --panel: #efeeea;
+      --elev: #eceff4;
+      --ink: #1f2d3d;
+      --muted: #6a7d92;
+      --accent: #1d5fa5;
+      --accent-2: #0e2a49;
+      --line: #d1ddea;
+      --radius-xl: 18px;
+      --radius: 12px;
+      --gap: 16px;
+      --gap-lg: 22px;
+      --shadow: 0 14px 28px rgba(7, 20, 43, .22);
+      --font: "Inter", "Segoe UI", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font: 15px/1.6 var(--font);
+      color: var(--ink);
+      background: var(--bg);
+      letter-spacing: .2px;
+      overflow-x: hidden;
+      position: relative;
+      isolation: isolate;
+      padding: 14px 14px 16px;
+    }
+
+    .bg {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .blobs {
+      position: absolute;
+      inset: 0;
+      filter: blur(90px);
+    }
+
+    .blob {
+      position: absolute;
+      border-radius: 50%;
+    }
+
+    .blob-1 {
+      width: 65%;
+      height: 65%;
+      background: radial-gradient(circle, #0e4a8a 0%, #040d1a 70%);
+      top: -15%;
+      left: -15%;
+      animation: d1 20s ease-in-out infinite alternate;
+    }
+
+    .blob-2 {
+      width: 55%;
+      height: 55%;
+      background: radial-gradient(circle, #0a6070 0%, #030e12 70%);
+      bottom: -10%;
+      right: 10%;
+      animation: d2 24s ease-in-out infinite alternate;
+    }
+
+    .blob-3 {
+      width: 45%;
+      height: 45%;
+      background: radial-gradient(circle, #163e7a 0%, #050f1e 70%);
+      top: 20%;
+      left: 25%;
+      animation: d3 17s ease-in-out infinite alternate;
+    }
+
+    .blob-4 {
+      width: 35%;
+      height: 35%;
+      background: radial-gradient(circle, #0b5060 0%, transparent 70%);
+      bottom: 5%;
+      left: 50%;
+      animation: d4 22s ease-in-out infinite alternate;
+    }
+
+    .blob-5 {
+      width: 50%;
+      height: 50%;
+      background: radial-gradient(circle, #0a3a6a 0%, #020810 70%);
+      top: 40%;
+      right: -10%;
+      animation: d5 19s ease-in-out infinite alternate;
+    }
+
+    @keyframes d1 { from { transform: translate(0, 0); } to { transform: translate(4%, 3%); } }
+    @keyframes d2 { from { transform: translate(0, 0); } to { transform: translate(-5%, -4%); } }
+    @keyframes d3 { from { transform: translate(0, 0); } to { transform: translate(3%, -5%); } }
+    @keyframes d4 { from { transform: translate(0, 0); } to { transform: translate(-3%, 2%); } }
+    @keyframes d5 { from { transform: translate(0, 0); } to { transform: translate(-4%, -3%); } }
+
+    .wrap {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 0 4px 14px;
+      position: relative;
+      z-index: 2;
+    }
+
+    .topbar {
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      border-radius: 0;
+      padding: 8px 0 10px;
+      position: relative;
+      margin-bottom: 14px;
+    }
+
+    .topbar::after {
+      content: "";
+      display: block;
+      height: 1px;
+      width: 100%;
+      margin-top: 10px;
+      background: rgba(221, 232, 249, .16);
+      pointer-events: none;
+    }
+
+    .topbar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      width: 100%;
+    }
+
+    .topbar-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .topbar-logo {
+      height: 56px;
+      width: auto;
+      max-width: 260px;
+      object-fit: contain;
+      /* Force all visible logo pixels to pure white */
+      filter: brightness(0) invert(1) grayscale(1) contrast(1000%) brightness(1.8);
+    }
+
+    .topbar-brand .brand-sep {
+      width: 1px;
+      height: 36px;
+      background: linear-gradient(180deg,
+          rgba(0, 0, 0, 0) 0%,
+          rgba(232, 239, 250, .45) 22%,
+          rgba(232, 239, 250, .45) 78%,
+          rgba(0, 0, 0, 0) 100%);
+    }
+
+    .topbar-title {
+      margin: 0;
+      font-size: 31px;
+      letter-spacing: .2px;
+      color: #e8effa;
+      text-transform: uppercase;
+      font-weight: 760;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+
+    .topbar-content {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      min-width: 44px;
+      margin-left: auto;
+    }
+
+    .home-btn {
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      border-radius: 0;
+      border: 0;
+      background: transparent;
+      color: #ffffff;
+      box-shadow: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: opacity 140ms ease;
+    }
+
+    .home-btn:hover {
+      transform: none;
+      opacity: .8;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .home-btn svg {
+      width: 24px;
+      height: 24px;
+      stroke: #ffffff;
+      fill: none;
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: clamp(320px, 30vw, 380px) minmax(0, 1fr);
+      gap: var(--gap-lg);
+      margin-top: 0;
+      align-items: start;
+    }
+
+    .entry-view {
+      padding: 48px 0 12px;
+    }
+
+    .entry-hero {
+      text-align: center;
+      margin-bottom: 34px;
+    }
+
+    .entry-title {
+      margin: 0 0 10px;
+      font-size: 72px;
+      line-height: 1.04;
+      font-weight: 700;
+      color: #e8edf5;
+      letter-spacing: .1px;
+    }
+
+    .entry-subtitle {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 500;
+      color: rgba(212, 224, 241, .8);
+      letter-spacing: .1px;
+    }
+
+    .entry-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(300px, 1fr));
+      gap: 18px;
+      max-width: 1220px;
+      margin: 0 auto;
+    }
+
+    .entry-card {
+      border: 1px solid rgba(230, 233, 238, .72);
+      border-radius: 20px;
+      background: #ecebe8;
+      color: #1b2d43;
+      min-height: 236px;
+      text-align: left;
+      padding: 26px 28px 18px;
+      box-shadow: 0 9px 20px rgba(2, 10, 24, .18);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .entry-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .entry-icon {
+      width: 50px;
+      height: 50px;
+      border-radius: 12px;
+      background: #dcdad6;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+    }
+
+    .entry-icon svg {
+      width: 23px;
+      height: 23px;
+      stroke: #646870;
+      fill: none;
+      stroke-width: 2.1;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .entry-card h3 {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 640;
+      color: #1f2732;
+      letter-spacing: .05px;
+    }
+
+    .entry-card p {
+      margin: 0;
+      color: #8f97a2;
+      font-size: 12px;
+      line-height: 1.42;
+    }
+
+    .entry-arrow-wrap {
+      display: flex;
+      justify-content: center;
+      margin-top: 16px;
+    }
+
+    .entry-arrow {
+      width: 40px;
+      height: 40px;
+      border-radius: 13px;
+      background: #dfddd9;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #6a707a;
+      font-size: 23px;
+      line-height: 1;
+      font-weight: 600;
+    }
+
+    .entry-card,
+    .entry-card:hover,
+    .entry-card:active {
+      background: #f0eeea !important;
+      color: #1b2d43 !important;
+      border: 1px solid #d4dce8 !important;
+      transform: none !important;
+    }
+
+    .view-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      gap: 12px;
+    }
+
+    .view-head h2 {
+      margin: 0;
+      color: #edf3ff;
+      font-size: 18px;
+      letter-spacing: .2px;
+    }
+
+    .view-back-btn {
+      width: auto;
+      min-width: 110px;
+      background: linear-gradient(135deg, #254b78 0%, #1a2f4b 100%);
+      border: 1px solid rgba(236, 244, 255, .22);
+    }
+
+    .compare-grid {
+      display: grid;
+      grid-template-columns: clamp(340px, 33vw, 420px) minmax(0, 1fr);
+      gap: var(--gap-lg);
+      align-items: start;
+    }
+
+    .compare-top-panel {
+      margin-bottom: 12px;
+    }
+
+    .compare-setup-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .compare-setup {
+      border: 1px dashed #c1d1e4;
+      border-radius: 12px;
+      padding: 12px;
+      background: #f7f9fc;
+    }
+
+    .compare-setup h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      color: #24405f;
+      letter-spacing: .2px;
+    }
+
+    .compare-setup .muted {
+      min-height: 18px;
+    }
+
+    .compare-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .compare-actions button {
+      white-space: nowrap;
+    }
+
+    .compare-pickers {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .compare-chart {
+      height: 320px;
+      border: 1px solid #cfd9e7;
+      border-radius: var(--radius);
+      margin-bottom: 20px;
+      background: #f7f9fc;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .custom-builder {
+      border: 1px solid #cfd9e7;
+      border-radius: var(--radius);
+      background: #f7f9fc;
+      padding: 10px;
+      margin-bottom: 12px;
+    }
+
+    .custom-builder h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: #2a415f;
+      text-transform: uppercase;
+      letter-spacing: .2px;
+    }
+
+    .custom-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .custom-grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .custom-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .custom-plot {
+      height: 330px;
+      border: 1px solid #cfd9e7;
+      border-radius: var(--radius);
+      margin-bottom: 20px;
+      background: #f7f9fc;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .preset-grid {
+      display: grid;
+      grid-template-columns: 1fr auto auto auto;
+      gap: 8px;
+      align-items: end;
+      margin-bottom: 8px;
+    }
+
+    .report-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .56);
+      z-index: 80;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .report-modal.open { display: flex; }
+
+    .report-editor {
+      width: min(1100px, 96vw);
+      max-height: 92vh;
+      overflow: auto;
+      background: #f1f2f4;
+      border: 1px solid #ced8e6;
+      border-radius: 18px;
+      box-shadow: 0 18px 40px rgba(7, 20, 43, .32);
+      padding: 16px;
+    }
+
+    .report-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .report-head h2 {
+      margin: 0;
+      color: #223952;
+      font-size: 18px;
+    }
+
+    .report-list {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .report-item {
+      border: 1px solid #cfd9e7;
+      border-radius: 12px;
+      background: #f7f9fc;
+      padding: 10px;
+    }
+
+    .report-item-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .report-item-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #2a415f;
+      margin: 0;
+    }
+
+    .report-item img {
+      width: 100%;
+      border: 1px solid #d7e0ec;
+      border-radius: 10px;
+      background: #fff;
+      margin-bottom: 8px;
+    }
+
+    .report-item textarea {
+      width: 100%;
+      min-height: 74px;
+      border: 1px solid #bfd0e3;
+      border-radius: 10px;
+      padding: 8px;
+      font: inherit;
+      resize: vertical;
+      background: #fff;
+      color: #1f2d3d;
+    }
+
+    .report-foot {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+      position: sticky;
+      bottom: 0;
+      background: linear-gradient(180deg, rgba(241,242,244,0.75) 0%, #f1f2f4 36%);
+      padding-top: 8px;
+    }
+
+    .setup-scroll-block {
+      border: 1px solid #cfd9e7;
+      border-radius: 12px;
+      background: #f7f9fc;
+      padding: 10px;
+      margin-bottom: 12px;
+      max-height: 250px;
+      overflow: auto;
+    }
+
+    .setup-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border: 1px solid #d3deec;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .setup-table th,
+    .setup-table td {
+      border-bottom: 1px solid #e3eaf4;
+      padding: 6px 8px;
+      font-size: 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .setup-table th {
+      background: #eef3fa;
+      color: #27415e;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    .setup-chart-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .setup-chart {
+      height: 320px;
+      border: 1px solid #cfd9e7;
+      border-radius: 12px;
+      background: #f7f9fc;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-xl);
+      padding: 18px;
+      box-shadow: var(--shadow);
+      height: fit-content;
+      align-self: start;
+    }
+
+    .panel-loading-host { position: relative; }
+    .panel-loading-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(237, 240, 245, 0.84);
+      border-radius: inherit;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      backdrop-filter: blur(1.5px);
+      pointer-events: all;
+    }
+    .panel-loading-overlay.visible { display: flex; }
+    .panel-loading-box {
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid #c9d7e8;
+      border-radius: 14px;
+      padding: 14px 16px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 8px 16px rgba(11, 26, 45, 0.15);
+      color: #1f3652;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .panel-loading-spinner {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 2px solid #bfd0e6;
+      border-top-color: #1d5fa5;
+      animation: panel-spin 0.85s linear infinite;
+      flex: 0 0 auto;
+    }
+    @keyframes panel-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 16px;
+      letter-spacing: .2px;
+      color: #243a55;
+    }
+
+    .muted { color: var(--muted); font-size: 13px; }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    label {
+      font-size: 12px;
+      color: #314861;
+      margin-bottom: 4px;
+      display: block;
+      font-weight: 600;
+      letter-spacing: .15px;
+    }
+
+    input, select, button {
+      width: 100%;
+      padding: 9px 10px;
+      border-radius: 10px;
+      border: 1px solid #bfcee0;
+      font: inherit;
+      transition: border-color 160ms ease, box-shadow 160ms ease, transform 120ms ease;
+    }
+
+    input, select {
+      background: #f7f9fc;
+      color: var(--ink);
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: #5f8fc6;
+      box-shadow: 0 0 0 3px rgba(29, 95, 165, 0.15);
+    }
+
+    button {
+      border: 0;
+      font-weight: 700;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent) 0%, #2f73bc 100%);
+      cursor: pointer;
+    }
+
+    button:hover { transform: translateY(-1px); }
+    button:active { transform: translateY(0); }
+
+    button.secondary { background: linear-gradient(135deg, var(--accent-2) 0%, #1d3e67 100%); }
+    button:disabled { opacity: .55; cursor: default; transform: none; }
+
+    .file-actions {
+      margin-top: 8px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .file-pill-btn {
+      height: 40px !important;
+      padding: 0 16px !important;
+      border-radius: 999px !important;
+      border: 1px solid rgba(0, 0, 0, .18) !important;
+      color: #111 !important;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      white-space: nowrap;
+      font-weight: 700;
+      letter-spacing: .1px;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, .95),
+        0 8px 16px rgba(0, 0, 0, .12) !important;
+      transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
+      animation: pillIdle 3.2s ease-in-out infinite;
+    }
+
+    .file-pill-btn:hover {
+      transform: translateY(-1px);
+      border-color: rgba(0, 0, 0, .28) !important;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, .95),
+        0 12px 22px rgba(0, 0, 0, .14) !important;
+    }
+
+    .file-pill-btn:active {
+      transform: translateY(0px);
+      box-shadow:
+        inset 0 2px 6px rgba(0, 0, 0, .18),
+        0 6px 14px rgba(0, 0, 0, .10) !important;
+    }
+
+    .file-pill-muted {
+      background: linear-gradient(180deg, #f2f3f5 0%, #e6e8ec 100%) !important;
+      border-color: rgba(43, 63, 91, .18) !important;
+      color: #9aa3b0 !important;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, .92),
+        0 7px 14px rgba(0, 0, 0, .10) !important;
+    }
+
+    .file-pill-bright {
+      background: linear-gradient(180deg, #ffffff 0%, #edf1f6 100%) !important;
+      color: #131a23 !important;
+    }
+
+    .file-pill-btn.is-ready {
+      background: linear-gradient(180deg, #ffffff 0%, #edf1f6 100%) !important;
+      color: #131a23 !important;
+      border-color: rgba(0, 0, 0, .18) !important;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, .95),
+        0 8px 16px rgba(0, 0, 0, .12) !important;
+    }
+
+    .file-pill-btn .btn-ico {
+      width: 18px;
+      height: 18px;
+      stroke: #1d5fa5;
+      fill: none;
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      transform-origin: center;
+    }
+
+    .file-pill-muted .btn-ico {
+      stroke: #a7afb9;
+      opacity: .9;
+    }
+
+    .file-pill-btn.is-ready .btn-ico {
+      stroke: #1d5fa5;
+      opacity: 1;
+    }
+
+    .file-pill-btn .btn-ico {
+      transition: transform 200ms ease, opacity 200ms ease, stroke 200ms ease;
+    }
+
+    .file-pill-btn:hover .btn-ico {
+      transform: translateY(-1px);
+    }
+
+    @keyframes pillIdle {
+      0%, 100% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 8px 16px rgba(0, 0, 0, .12); }
+      50% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 10px 18px rgba(0, 0, 0, .14); }
+    }
+
+    .chart-card {
+      border: 1px solid #d2dce9;
+      border-radius: var(--radius);
+      padding: 12px;
+      margin-bottom: 12px;
+      background: linear-gradient(180deg, #f6f8fc 0%, #eef3f9 100%);
+    }
+
+    .sim-chart-container {
+      height: 380px;
+      border: 1px solid #cfd9e7;
+      border-radius: var(--radius);
+      margin-bottom: 20px;
+      background: #f7f9fc;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .sim-chart-container--tall {
+      height: 590px;
+    }
+
+    .force-block {
+      border: 1px solid #cfd9e7;
+      border-radius: var(--radius);
+      background: #f7f9fc;
+      padding: 10px;
+      margin-bottom: 20px;
+      position: relative;
+    }
+
+    .force-block-title {
+      margin: 2px 2px 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #2a415f;
+      letter-spacing: .2px;
+      text-transform: uppercase;
+    }
+
+    .force-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .force-grid-chart {
+      height: 270px;
+      border: 1px solid #d8e2ef;
+      border-radius: 10px;
+      background: #f7f9fc;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .sens-grid-chart {
+      height: 340px;
+      margin-bottom: 0;
+    }
+
+    .chart-close-btn {
+      position: absolute;
+      top: 8px; left: 8px;
+      width: 24px; height: 24px;
+      border: none; border-radius: 50%;
+      background: rgba(181, 25, 12, 0.82);
+      color: #fff; font-size: 15px; line-height: 1;
+      cursor: pointer; z-index: 20;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0; opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+    .sim-chart-container:hover .chart-close-btn,
+    .compare-chart:hover .chart-close-btn,
+    .force-grid-chart:hover .chart-close-btn,
+    .force-block:hover > .chart-close-btn,
+    .setup-chart:hover .chart-close-btn,
+    .custom-plot:hover .chart-close-btn { opacity: 1; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 12px; background: #f7f9fc; }
+    th, td { border-bottom: 1px solid #d8e2ef; padding: 7px; text-align: right; }
+    th {
+      position: sticky;
+      top: 0;
+      background: #e8eef7;
+      color: #2a415f;
+      font-weight: 700;
+      letter-spacing: .2px;
+    }
+    th:first-child, td:first-child { text-align: left; }
+    .sens-table th {
+      position: static;
+      top: auto;
+      z-index: auto;
+    }
+
+    @media (max-width: 1400px) {
+      .grid { grid-template-columns: 1fr; }
+      .compare-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 1024px) {
+      .grid { grid-template-columns: 1fr; }
+      .compare-grid { grid-template-columns: 1fr; }
+      .compare-setup-grid { grid-template-columns: 1fr; }
+      .compare-pickers { grid-template-columns: 1fr; }
+      .custom-grid, .custom-grid-3, .custom-actions, .setup-chart-grid { grid-template-columns: 1fr; }
+      .force-grid { grid-template-columns: 1fr; }
+      .preset-grid { grid-template-columns: 1fr 1fr; }
+      .entry-grid { grid-template-columns: 1fr; max-width: 100%; }
+      .entry-card { min-height: 196px; padding: 20px 18px 14px; }
+      .entry-card h3 { font-size: 16px; }
+      .entry-card p { font-size: 12px; }
+      .entry-title { font-size: 42px; }
+      .entry-subtitle { font-size: 13px; }
+      body { padding: 14px 12px 16px; }
+      .wrap { padding: 0; }
+      .topbar-logo { height: 46px; max-width: 200px; }
+      .topbar-title { font-size: 24px; }
+      .topbar-brand .brand-sep { height: 30px; }
+    }
+
+    @media (max-width: 1380px) {
+      .sens-force-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg">
+    <div class="blobs">
+      <span class="blob blob-1"></span>
+      <span class="blob blob-2"></span>
+      <span class="blob blob-3"></span>
+      <span class="blob blob-4"></span>
+      <span class="blob blob-5"></span>
+    </div>
+  </div>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="topbar-brand">
+          <img src="/static/campus_logo.png" alt="Campus Racing logo" class="topbar-logo">
+          <span class="brand-sep" aria-hidden="true"></span>
+          <h1 class="topbar-title">Performance Lab</h1>
+        </div>
+        <div class="topbar-content">
+          <button class="home-btn" id="homeBtn" title="Home" aria-label="Home">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 11.5 12 4l9 7.5"></path>
+              <path d="M6.5 10.5V20h11V10.5"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <section id="entry-view" class="entry-view">
+      <div class="entry-hero">
+        <h2 class="entry-title">Performance Lab</h2>
+        <p class="entry-subtitle">Select a tool to get started.</p>
+      </div>
+      <div class="entry-grid">
+        <button class="entry-card" id="goCalculator">
+          <div>
+            <div class="entry-head">
+              <span class="entry-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="8.5"></circle>
+                  <path d="M12 7v5h4"></path>
+                </svg>
+              </span>
+              <h3>Sweep Calculator</h3>
+            </div>
+            <p>Run single-setup dynamic simulation with full aero, Fz, Fy and Fx plots.</p>
+          </div>
+          <span class="entry-arrow-wrap"><span class="entry-arrow" aria-hidden="true">&rarr;</span></span>
+        </button>
+        <button class="entry-card" id="goCompare">
+          <div>
+            <div class="entry-head">
+              <span class="entry-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M4 14c2 0 2-4 4-4s2 4 4 4 2-4 4-4 2 4 4 4"></path>
+                </svg>
+              </span>
+              <h3>Setup Compare</h3>
+            </div>
+            <p>Load two setup files and compare the simulation response in one view.</p>
+          </div>
+          <span class="entry-arrow-wrap"><span class="entry-arrow" aria-hidden="true">&rarr;</span></span>
+        </button>
+        <button class="entry-card" id="goCompareResults">
+          <div>
+            <div class="entry-head">
+              <span class="entry-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M4 18h16"></path>
+                  <path d="M7 18v-5"></path>
+                  <path d="M12 18v-8"></path>
+                  <path d="M17 18v-3"></path>
+                </svg>
+              </span>
+              <h3>Compare Results</h3>
+            </div>
+            <p>Select two saved simulation results and compare all plots.</p>
+          </div>
+          <span class="entry-arrow-wrap"><span class="entry-arrow" aria-hidden="true">&rarr;</span></span>
+        </button>
+        <button class="entry-card" id="goSensitivity">
+          <div>
+            <div class="entry-head">
+              <span class="entry-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M12 20V10"></path>
+                  <path d="M18 20V4"></path>
+                  <path d="M6 20v-4"></path>
+                  <path d="M3 20h18"></path>
+                  <circle cx="12" cy="7" r="2"></circle>
+                  <circle cx="18" cy="7" r="2" fill="none"></circle>
+                  <circle cx="6" cy="13" r="2" fill="none"></circle>
+                </svg>
+              </span>
+              <h3>Sensitivity Analysis</h3>
+            </div>
+            <p>Perturb each setup parameter and quantify the impact on Fy, Fz, aero balance and drag.</p>
+          </div>
+          <span class="entry-arrow-wrap"><span class="entry-arrow" aria-hidden="true">&rarr;</span></span>
+        </button>
+      </div>
+    </section>
+
+    <section id="calculator-view" style="display:none;">
+      <div class="view-head">
+        <h2>Sweep Calculator</h2>
+      </div>
+      <div class="grid">
+        <section class="panel panel-loading-host">
+        <h2>1) Load Setup JSON</h2>
+        <input id="jsonFile" type="file" accept=".json" style="display:none;" />
+        <div class="file-actions">
+          <button id="btnStageFile" class="file-pill-btn file-pill-muted" disabled>
+            <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 21V4"></path>
+              <path d="M5 5h10l-2 3 2 3H5z"></path>
+            </svg>
+            <span>Stage Car</span>
+          </button>
+          <button id="btnLoadCar" class="file-pill-btn file-pill-bright">
+            <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 21V8"></path>
+              <path d="M7.5 12.5L12 8l4.5 4.5"></path>
+              <path d="M4 21h16"></path>
+            </svg>
+            <span>Load Car</span>
+          </button>
+          <button id="btnViewSetup" class="file-pill-btn file-pill-muted" disabled>
+            <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"></path>
+            </svg>
+            <span>View Setup</span>
+          </button>
+        </div>
+        <p id="fileName" class="muted" style="margin-top:6px;">No file selected.</p>
+        <p id="loadStatus" class="muted">No JSON loaded.</p>
+
+        <h2 style="margin-top:14px;">2) Dynamic Inputs</h2>
+        <div class="chart-card">
+          <div class="preset-grid">
+            <div>
+              <label>Input preset</label>
+              <select id="dyn_input_preset_select">
+                <option value="">Select preset</option>
+              </select>
+            </div>
+            <button id="dyn_input_preset_save" class="secondary">Save</button>
+            <button id="dyn_input_preset_apply">Apply</button>
+            <button id="dyn_input_preset_delete">Delete</button>
+          </div>
+          <p id="dyn_input_preset_status" class="muted">No input presets saved yet.</p>
+        </div>
+        <div class="chart-card">
+          <div class="row">
+            <div><label>Air density (kg/m3)</label><input id="air_density" type="number" step="0.001" value="1.225"></div>
+            <div><label>Speed mode</label><select id="speed_mode"><option value="single">single</option><option value="range">range</option></select></div>
+          </div>
+          <div class="row" id="speed_single_wrap">
+            <div><label>Speed (kph)</label><input id="speed_kph" type="number" step="1" value="180"></div>
+          </div>
+          <div class="row" id="speed_range_wrap" style="display:none;">
+            <div><label>Speed min</label><input id="speed_min_kph" type="number" step="1" value="100"></div>
+            <div><label>Speed max</label><input id="speed_max_kph" type="number" step="1" value="260"></div>
+          </div>
+          <div class="row" id="speed_step_wrap" style="display:none;">
+            <div><label>Speed step</label><input id="speed_step_kph" type="number" step="1" value="20"></div>
+            <div><label>DRS</label><select id="drs_on"><option value="false">OFF</option><option value="true">ON</option></select></div>
+          </div>
+          <div class="row" id="speed_drs_single_wrap">
+            <div><label>DRS</label><select id="drs_on_single"><option value="false">OFF</option><option value="true">ON</option></select></div>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <div class="row">
+            <div><label>Sweep variable</label>
+              <select id="sweep_variable">
+                <option value="front_roll">front_roll</option>
+                <option value="rear_roll">rear_roll</option>
+                <option value="global_roll">global_roll</option>
+                <option value="front_heave" selected>front_heave (compression +)</option>
+                <option value="rear_heave">rear_heave (compression +)</option>
+                <option value="global_heave">global_heave (compression +)</option>
+                <option value="roll_custom">roll_custom</option>
+                <option value="heave_custom">heave_custom (compression +)</option>
+              </select>
+            </div>
+            <div><label>Acc units</label><select id="acc_units"><option value="g">g</option><option value="mps2">m/s2</option></select></div>
+          </div>
+          <div class="row" id="sweep_normal_wrap">
+            <div><label>Sweep min</label><input id="sweep_min" type="number" step="0.1" value="-20"></div>
+            <div><label>Sweep max</label><input id="sweep_max" type="number" step="0.1" value="20"></div>
+          </div>
+          <div class="row" id="sweep_normal_step_wrap">
+            <div><label>Sweep step</label><input id="sweep_step" type="number" step="0.1" value="2"></div>
+          </div>
+          <div id="sweep_custom_wrap" style="display:none;">
+            <div class="row">
+              <div><label>Front min</label><input id="front_min" type="number" step="0.1" value="-2"></div>
+              <div><label>Front max</label><input id="front_max" type="number" step="0.1" value="2"></div>
+            </div>
+            <div class="row">
+              <div><label>Front step</label><input id="front_step" type="number" step="0.1" value="0.2"></div>
+              <div><label>Rear min</label><input id="rear_min" type="number" step="0.1" value="-2"></div>
+            </div>
+            <div class="row">
+              <div><label>Rear max</label><input id="rear_max" type="number" step="0.1" value="2"></div>
+              <div><label>Rear step</label><input id="rear_step" type="number" step="0.1" value="0.2"></div>
+            </div>
+          </div>
+          <div class="row">
+            <div><label>Ax</label><input id="ax" type="number" step="0.01" value="0"></div>
+            <div><label>Ay</label><input id="ay" type="number" step="0.01" value="0"></div>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <div class="row">
+            <div><label>Slip angle FL (deg)</label><input id="sa_fl" type="number" step="0.1" value="3"></div>
+            <div><label>Slip angle FR (deg)</label><input id="sa_fr" type="number" step="0.1" value="3"></div>
+          </div>
+          <div class="row">
+            <div><label>Slip angle RL (deg)</label><input id="sa_rl" type="number" step="0.1" value="2"></div>
+            <div><label>Slip angle RR (deg)</label><input id="sa_rr" type="number" step="0.1" value="2"></div>
+          </div>
+          <div class="row">
+            <div><label>Slip ratio FL</label><input id="sr_fl" type="number" step="0.01" value="0"></div>
+            <div><label>Slip ratio FR</label><input id="sr_fr" type="number" step="0.01" value="0"></div>
+          </div>
+          <div class="row">
+            <div><label>Slip ratio RL</label><input id="sr_rl" type="number" step="0.01" value="0"></div>
+            <div><label>Slip ratio RR</label><input id="sr_rr" type="number" step="0.01" value="0"></div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:10px;">
+          <div><button id="btnRun">Simulate</button></div>
+        </div>
+        <p id="simStatus" class="muted">Ready to simulate.</p>
+        </section>
+
+        <section class="panel">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px;flex-wrap:wrap;">
+            <h2 style="margin:0;">Results</h2>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button id="dyn_save_results" class="secondary" style="width:auto;min-width:150px;" disabled>Save Results</button>
+              <button id="dyn_export_pdf" class="secondary" style="width:auto;min-width:150px;" disabled>Export PDF</button>
+              <button id="btnCsvResults" class="secondary" style="width:auto;min-width:180px;" disabled>Download Results CSV</button>
+            </div>
+          </div>
+
+        <div class="sim-chart-container sim-chart-container--tall" id="dyn-plot-main"></div>
+        <div class="sim-chart-container sim-chart-container--tall" id="dyn-plot-balance"></div>
+        <div id="dyn-wheel-speed-wrap" style="display:none;margin:8px 0;">
+          <label style="font-size:12px;color:#35445f;margin-right:8px;">Wheel-load speed</label>
+          <select id="dyn-wheel-speed-select" style="max-width:180px;"></select>
+        </div>
+        <div class="sim-chart-container" id="dyn-plot-fz-mech"></div>
+        <div class="sim-chart-container" id="dyn-plot-fz-total"></div>
+        <div class="force-block" id="dyn-block-fy">
+          <button class="chart-close-btn" title="Remove block" onclick="this.closest('.force-block').style.display='none'">&times;</button>
+          <div class="force-block-title">Tyre Fy per Wheel</div>
+          <div class="force-grid">
+            <div class="force-grid-chart" id="dyn-plot-fy-fl"></div>
+            <div class="force-grid-chart" id="dyn-plot-fy-fr"></div>
+            <div class="force-grid-chart" id="dyn-plot-fy-rl"></div>
+            <div class="force-grid-chart" id="dyn-plot-fy-rr"></div>
+          </div>
+        </div>
+        <div class="force-block" id="dyn-block-fx">
+          <button class="chart-close-btn" title="Remove block" onclick="this.closest('.force-block').style.display='none'">&times;</button>
+          <div class="force-block-title">Tyre Fx per Wheel</div>
+          <div class="force-grid">
+            <div class="force-grid-chart" id="dyn-plot-fx-fl"></div>
+            <div class="force-grid-chart" id="dyn-plot-fx-fr"></div>
+            <div class="force-grid-chart" id="dyn-plot-fx-rl"></div>
+            <div class="force-grid-chart" id="dyn-plot-fx-rr"></div>
+          </div>
+        </div>
+        <div class="custom-builder">
+          <h3>Custom Plot Builder</h3>
+          <div class="custom-grid-3">
+            <div>
+              <label>Mode</label>
+              <select id="dyn_custom_mode">
+                <option value="2d">2D</option>
+                <option value="3d">3D</option>
+              </select>
+            </div>
+            <div>
+              <label>X axis</label>
+              <select id="dyn_custom_x"><option value="">Select variable</option></select>
+            </div>
+            <div>
+              <label>Y axis</label>
+              <select id="dyn_custom_y"><option value="">Select variable</option></select>
+            </div>
+          </div>
+          <div class="custom-grid" id="dyn_custom_z_wrap" style="display:none;">
+            <div>
+              <label>Z axis</label>
+              <select id="dyn_custom_z"><option value="">Select variable</option></select>
+            </div>
+          </div>
+          <div class="custom-grid">
+            <div>
+              <label>Chart name</label>
+              <input id="dyn_custom_title" type="text" placeholder="Custom chart name">
+            </div>
+          </div>
+          <div class="custom-actions">
+            <button id="dyn_custom_add" class="secondary">Add Custom Chart</button>
+            <button id="dyn_custom_clear">Clear Custom Charts</button>
+          </div>
+          <p id="dyn_custom_status" class="muted" style="margin-top:8px;">Run simulation to enable custom charts.</p>
+        </div>
+        <div id="dyn_custom_charts"></div>
+        <div class="muted" id="dyn-summary-text"></div>
+
+        <div style="overflow:auto; max-height: 420px; margin-top:10px;">
+          <table>
+            <thead>
+              <tr>
+                <th>speed</th><th>sweep_front</th><th>hf</th><th>rf</th><th>hr</th><th>rr</th>
+                <th>fz_fl</th><th>fz_fr</th><th>fz_rl</th><th>fz_rr</th>
+                <th>fy_fl</th><th>fy_fr</th><th>fy_rl</th><th>fy_rr</th><th>fy_total</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+        </section>
+      </div>
+    </section>
+
+    <section id="compare-view" style="display:none;">
+      <div class="view-head">
+        <h2>Setup Compare</h2>
+      </div>
+      <section class="panel compare-top-panel">
+        <h2>1) Setup Pool</h2>
+        <input id="cmp_files" type="file" accept=".json" multiple style="display:none;" />
+        <div class="compare-actions">
+          <button id="cmp_btn_stage_pool" class="file-pill-btn file-pill-muted" disabled>
+            <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 21V4"></path>
+              <path d="M5 5h10l-2 3 2 3H5z"></path>
+            </svg>
+            <span>Stage Setups</span>
+          </button>
+          <button id="cmp_btn_load_pool" class="file-pill-btn file-pill-bright">
+            <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 21V8"></path>
+              <path d="M7.5 12.5L12 8l4.5 4.5"></path>
+              <path d="M4 21h16"></path>
+            </svg>
+            <span>Load Setups</span>
+          </button>
+        </div>
+        <p id="cmp_pool_file_status" class="muted" style="margin-top:8px;">No files selected.</p>
+        <p id="cmp_pool_stage_status" class="muted">No setups staged.</p>
+        <div class="compare-pickers">
+          <div>
+            <label>Setup A</label>
+            <select id="cmp_setup_a">
+              <option value="">Select setup</option>
+            </select>
+          </div>
+          <div>
+            <label>Setup B</label>
+            <select id="cmp_setup_b">
+              <option value="">Select setup</option>
+            </select>
+          </div>
+        </div>
+      </section>
+      <div class="compare-grid">
+        <section class="panel">
+          <h2>2) Compare Inputs</h2>
+          <div class="chart-card">
+            <div class="preset-grid">
+              <div>
+                <label>Input preset</label>
+                <select id="cmp_input_preset_select">
+                  <option value="">Select preset</option>
+                </select>
+              </div>
+              <button id="cmp_input_preset_save" class="secondary">Save</button>
+              <button id="cmp_input_preset_apply">Apply</button>
+              <button id="cmp_input_preset_delete">Delete</button>
+            </div>
+            <p id="cmp_input_preset_status" class="muted">No input presets saved yet.</p>
+          </div>
+          <div class="chart-card">
+            <div class="row">
+              <div><label>Air density (kg/m3)</label><input id="cmp_air_density" type="number" step="0.001" value="1.225"></div>
+              <div><label>Speed mode</label><select id="cmp_speed_mode"><option value="single">single</option><option value="range">range</option></select></div>
+            </div>
+            <div class="row" id="cmp_speed_single_wrap">
+              <div><label>Speed (kph)</label><input id="cmp_speed_kph" type="number" step="1" value="180"></div>
+            </div>
+            <div class="row" id="cmp_speed_range_wrap" style="display:none;">
+              <div><label>Speed min</label><input id="cmp_speed_min_kph" type="number" step="1" value="100"></div>
+              <div><label>Speed max</label><input id="cmp_speed_max_kph" type="number" step="1" value="260"></div>
+            </div>
+            <div class="row" id="cmp_speed_step_wrap" style="display:none;">
+              <div><label>Speed step</label><input id="cmp_speed_step_kph" type="number" step="1" value="20"></div>
+              <div><label>DRS</label><select id="cmp_drs_on"><option value="false">OFF</option><option value="true">ON</option></select></div>
+            </div>
+            <div class="row" id="cmp_speed_drs_single_wrap">
+              <div><label>DRS</label><select id="cmp_drs_on_single"><option value="false">OFF</option><option value="true">ON</option></select></div>
+            </div>
+          </div>
+
+          <div class="chart-card">
+            <div class="row">
+              <div><label>Sweep variable</label>
+                <select id="cmp_sweep_variable">
+                  <option value="front_roll">front_roll</option>
+                  <option value="rear_roll">rear_roll</option>
+                  <option value="global_roll">global_roll</option>
+                  <option value="front_heave" selected>front_heave (compression +)</option>
+                  <option value="rear_heave">rear_heave (compression +)</option>
+                  <option value="global_heave">global_heave (compression +)</option>
+                  <option value="roll_custom">roll_custom</option>
+                  <option value="heave_custom">heave_custom (compression +)</option>
+                </select>
+              </div>
+              <div><label>Acc units</label><select id="cmp_acc_units"><option value="g">g</option><option value="mps2">m/s2</option></select></div>
+            </div>
+            <div class="row" id="cmp_sweep_normal_wrap">
+              <div><label>Sweep min</label><input id="cmp_sweep_min" type="number" step="0.1" value="-20"></div>
+              <div><label>Sweep max</label><input id="cmp_sweep_max" type="number" step="0.1" value="20"></div>
+            </div>
+            <div class="row" id="cmp_sweep_normal_step_wrap">
+              <div><label>Sweep step</label><input id="cmp_sweep_step" type="number" step="0.1" value="2"></div>
+            </div>
+            <div id="cmp_sweep_custom_wrap" style="display:none;">
+              <div class="row">
+                <div><label>Front min</label><input id="cmp_front_min" type="number" step="0.1" value="-2"></div>
+                <div><label>Front max</label><input id="cmp_front_max" type="number" step="0.1" value="2"></div>
+              </div>
+              <div class="row">
+                <div><label>Front step</label><input id="cmp_front_step" type="number" step="0.1" value="0.2"></div>
+                <div><label>Rear min</label><input id="cmp_rear_min" type="number" step="0.1" value="-2"></div>
+              </div>
+              <div class="row">
+                <div><label>Rear max</label><input id="cmp_rear_max" type="number" step="0.1" value="2"></div>
+                <div><label>Rear step</label><input id="cmp_rear_step" type="number" step="0.1" value="0.2"></div>
+              </div>
+            </div>
+            <div class="row">
+              <div><label>Ax</label><input id="cmp_ax" type="number" step="0.01" value="0"></div>
+              <div><label>Ay</label><input id="cmp_ay" type="number" step="0.01" value="0"></div>
+            </div>
+          </div>
+
+          <div class="chart-card">
+            <div class="row">
+              <div><label>Slip angle FL (deg)</label><input id="cmp_sa_fl" type="number" step="0.1" value="3"></div>
+              <div><label>Slip angle FR (deg)</label><input id="cmp_sa_fr" type="number" step="0.1" value="3"></div>
+            </div>
+            <div class="row">
+              <div><label>Slip angle RL (deg)</label><input id="cmp_sa_rl" type="number" step="0.1" value="2"></div>
+              <div><label>Slip angle RR (deg)</label><input id="cmp_sa_rr" type="number" step="0.1" value="2"></div>
+            </div>
+            <div class="row">
+              <div><label>Slip ratio FL</label><input id="cmp_sr_fl" type="number" step="0.01" value="0"></div>
+              <div><label>Slip ratio FR</label><input id="cmp_sr_fr" type="number" step="0.01" value="0"></div>
+            </div>
+            <div class="row">
+              <div><label>Slip ratio RL</label><input id="cmp_sr_rl" type="number" step="0.01" value="0"></div>
+              <div><label>Slip ratio RR</label><input id="cmp_sr_rr" type="number" step="0.01" value="0"></div>
+            </div>
+          </div>
+          <button id="cmp_btn_run_all" class="secondary">Run</button>
+          <p id="cmp_global_status" class="muted" style="margin-top:8px;">Load two setups to compare.</p>
+
+        </section>
+
+        <section class="panel">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px;flex-wrap:wrap;">
+            <h2 style="margin:0;">Comparison Results</h2>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button id="cmp_export_pdf" class="secondary" style="width:auto;min-width:140px;" disabled>Export PDF</button>
+              <button id="cmp_export_csv" class="secondary" style="width:auto;min-width:140px;" disabled>Export CSV</button>
+            </div>
+          </div>
+          <div id="cmp-plot-aero" class="compare-chart"></div>
+          <div id="cmp-plot-fz" class="compare-chart"></div>
+          <div id="cmp-plot-fy" class="compare-chart"></div>
+          <div id="cmp-plot-fx" class="compare-chart"></div>
+          <div class="custom-builder">
+            <h3>Custom Plot Builder</h3>
+            <div class="custom-grid-3">
+              <div>
+                <label>Mode</label>
+                <select id="cmp_custom_mode">
+                  <option value="2d">2D</option>
+                  <option value="3d">3D</option>
+                </select>
+              </div>
+              <div>
+                <label>Source</label>
+                <select id="cmp_custom_source">
+                  <option value="a">Setup A</option>
+                  <option value="b">Setup B</option>
+                  <option value="both">Both (2D)</option>
+                </select>
+              </div>
+              <div>
+                <label>X axis</label>
+                <select id="cmp_custom_x"><option value="">Select variable</option></select>
+              </div>
+            </div>
+            <div class="custom-grid">
+              <div>
+                <label>Y axis</label>
+                <select id="cmp_custom_y"><option value="">Select variable</option></select>
+              </div>
+              <div id="cmp_custom_z_wrap" style="display:none;">
+                <label>Z axis</label>
+                <select id="cmp_custom_z"><option value="">Select variable</option></select>
+              </div>
+            </div>
+            <div class="custom-grid">
+              <div>
+                <label>Chart name</label>
+                <input id="cmp_custom_title" type="text" placeholder="Custom chart name">
+              </div>
+            </div>
+            <div class="custom-actions">
+              <button id="cmp_custom_add" class="secondary">Add Custom Chart</button>
+              <button id="cmp_custom_clear">Clear Custom Charts</button>
+            </div>
+            <p id="cmp_custom_status" class="muted" style="margin-top:8px;">Run comparison to enable custom charts.</p>
+          </div>
+          <div id="cmp_custom_charts"></div>
+          <div id="cmp-summary" class="muted"></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="compare-results-view" style="display:none;">
+      <div class="view-head">
+        <h2>Compare Results</h2>
+      </div>
+      <div class="compare-grid">
+        <section class="panel">
+          <h2>Saved Results Selection</h2>
+          <div class="chart-card">
+            <div class="row">
+              <div>
+                <label>Result A</label>
+                <select id="cmpres_result_a">
+                  <option value="">Select saved result</option>
+                </select>
+              </div>
+              <div>
+                <label>Result B</label>
+                <select id="cmpres_result_b">
+                  <option value="">Select saved result</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button id="cmpres_compare_btn">Compare</button>
+            <button id="cmpres_export_report" class="secondary">Export PDF</button>
+          </div>
+          <p id="cmpres_status" class="muted">No saved results yet. Run a comparison first.</p>
+        </section>
+        <section class="panel">
+          <h2 style="margin-bottom:10px;">Results Comparison</h2>
+          <div id="cmpres-plot-aero" class="compare-chart"></div>
+          <div id="cmpres-plot-fz" class="compare-chart"></div>
+          <div id="cmpres-plot-fy" class="compare-chart"></div>
+          <div id="cmpres-plot-fx" class="compare-chart"></div>
+          <div class="custom-builder">
+            <h3>Custom Plot Builder</h3>
+            <div class="custom-grid-3">
+              <div>
+                <label>Mode</label>
+                <select id="cmpres_custom_mode">
+                  <option value="2d">2D</option>
+                  <option value="3d">3D</option>
+                </select>
+              </div>
+              <div>
+                <label>Source</label>
+                <select id="cmpres_custom_source">
+                  <option value="a">Result A</option>
+                  <option value="b">Result B</option>
+                  <option value="both">Both (2D)</option>
+                </select>
+              </div>
+              <div>
+                <label>X axis</label>
+                <select id="cmpres_custom_x"><option value="">Select variable</option></select>
+              </div>
+            </div>
+            <div class="custom-grid">
+              <div>
+                <label>Y axis</label>
+                <select id="cmpres_custom_y"><option value="">Select variable</option></select>
+              </div>
+              <div id="cmpres_custom_z_wrap" style="display:none;">
+                <label>Z axis</label>
+                <select id="cmpres_custom_z"><option value="">Select variable</option></select>
+              </div>
+            </div>
+            <div class="custom-grid">
+              <div>
+                <label>Chart name</label>
+                <input id="cmpres_custom_title" type="text" placeholder="Custom chart name">
+              </div>
+            </div>
+            <div class="custom-actions">
+              <button id="cmpres_custom_add" class="secondary">Add Custom Chart</button>
+              <button id="cmpres_custom_clear">Clear Custom Charts</button>
+            </div>
+            <p id="cmpres_custom_status" class="muted" style="margin-top:8px;">Select saved results to enable custom charts.</p>
+          </div>
+          <div id="cmpres_custom_charts"></div>
+          <div id="cmpres-summary" class="muted"></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="sensitivity-view" style="display:none;">
+      <div class="view-head">
+        <h2>Sensitivity Analysis</h2>
+      </div>
+      <div class="grid">
+        <section class="panel">
+          <h2>1) Load Setup JSON</h2>
+          <input id="sens_jsonFile" type="file" accept=".json" style="display:none;" />
+          <div class="file-actions">
+            <button id="sens_btnStageFile" class="file-pill-btn file-pill-muted" disabled>
+              <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 21V4"></path>
+                <path d="M5 5h10l-2 3 2 3H5z"></path>
+              </svg>
+              <span>Stage Car</span>
+            </button>
+            <button id="sens_btnLoadCar" class="file-pill-btn file-pill-bright">
+              <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 21V8"></path>
+                <path d="M7.5 12.5L12 8l4.5 4.5"></path>
+                <path d="M4 21h16"></path>
+              </svg>
+              <span>Load Car</span>
+            </button>
+            <button id="sens_btnViewSetup" class="file-pill-btn file-pill-muted" disabled>
+              <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"></path>
+              </svg>
+              <span>View Setup</span>
+            </button>
+          </div>
+          <p id="sens_fileName" class="muted" style="margin-top:6px;">No file selected.</p>
+          <p id="sens_loadStatus" class="muted">No JSON loaded.</p>
+
+          <h2 style="margin-top:14px;">2) Base Operating Point</h2>
+          <div class="chart-card">
+            <div class="row">
+              <div>
+                <label>Speed (km/h)</label>
+                <input id="sens_speed_kph" type="number" value="140" step="1" min="0">
+              </div>
+              <div>
+                <label>Air density (kg/m&sup3;)</label>
+                <input id="sens_air_density" type="number" value="1.225" step="0.001">
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Ax (g)</label>
+                <input id="sens_ax" type="number" value="0" step="0.01">
+              </div>
+              <div>
+                <label>Ay (g)</label>
+                <input id="sens_ay" type="number" value="0" step="0.01">
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Front Heave hf (compression +, mm)</label>
+                <input id="sens_hf" type="number" value="0" step="0.1">
+              </div>
+              <div>
+                <label>Front Roll rf (&deg;)</label>
+                <input id="sens_rf" type="number" value="0" step="0.01">
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Rear Heave hr (compression +, mm)</label>
+                <input id="sens_hr" type="number" value="0" step="0.1">
+              </div>
+              <div>
+                <label>Rear Roll rr (&deg;)</label>
+                <input id="sens_rr" type="number" value="0" step="0.01">
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Slip angle FL/FR (&deg;)</label>
+                <input id="sens_sa_f" type="number" value="4" step="0.1">
+              </div>
+              <div>
+                <label>Slip angle RL/RR (&deg;)</label>
+                <input id="sens_sa_r" type="number" value="4" step="0.1">
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>DRS</label>
+                <select id="sens_drs_on">
+                  <option value="false">Off</option>
+                  <option value="true">On</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <h2 style="margin-top:14px;">3) Perturbation Deltas</h2>
+          <div class="chart-card">
+            <div class="row">
+              <div>
+                <label>&Delta; Front Heave (compression +, mm)</label>
+                <input id="sens_delta_front_heave" type="number" value="1" step="0.1">
+              </div>
+              <div>
+                <label>&Delta; Rear Heave (compression +, mm)</label>
+                <input id="sens_delta_rear_heave" type="number" value="1" step="0.1">
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>&Delta; Front Roll (&deg;)</label>
+                <input id="sens_delta_front_roll" type="number" value="0.1" step="0.01">
+              </div>
+              <div>
+                <label>&Delta; Rear Roll (&deg;)</label>
+                <input id="sens_delta_rear_roll" type="number" value="0.1" step="0.01">
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>&Delta; Speed (km/h)</label>
+                <input id="sens_delta_speed" type="number" value="1" step="0.1">
+              </div>
+              <div>
+                <label>&Delta; Ay (g)</label>
+                <input id="sens_delta_ay" type="number" value="0.1" step="0.01">
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>&Delta; Ax (g)</label>
+                <input id="sens_delta_ax" type="number" value="0.1" step="0.01">
+              </div>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px;">
+            <div><button id="sens_run_btn">Run Sensitivity</button></div>
+          </div>
+          <p id="sens_status" class="muted" style="margin-top:6px;">Load a JSON and click Run Sensitivity.</p>
+        </section>
+
+        <section class="panel">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px;flex-wrap:wrap;">
+            <h2 style="margin:0;">Results</h2>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button id="sens_export_pdf" class="secondary" style="width:auto;min-width:150px;" disabled>Export PDF</button>
+              <button id="sens_export_csv" class="secondary" style="width:auto;min-width:180px;" disabled>Download CSV</button>
+            </div>
+          </div>
+          <div id="sens_table_wrap" style="overflow:auto;max-height:340px;margin-bottom:18px;"></div>
+          <div class="force-block" id="sens-block-fz-mechanical">
+            <div class="force-block-title">Fz Mechanical per Wheel</div>
+            <div class="force-grid sens-force-grid">
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fz-mech-fl"></div>
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fz-mech-fr"></div>
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fz-mech-rl"></div>
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fz-mech-rr"></div>
+            </div>
+          </div>
+          <div class="force-block" id="sens-block-fz-aero">
+            <div class="force-block-title">Fz Aero per Wheel</div>
+            <div class="force-grid sens-force-grid">
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fz-aero-fl"></div>
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fz-aero-fr"></div>
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fz-aero-rl"></div>
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fz-aero-rr"></div>
+            </div>
+          </div>
+          <div class="force-block" id="sens-block-fz-total">
+            <div class="force-block-title">Fz Total per Wheel</div>
+            <div class="force-grid sens-force-grid">
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fz-total-fl"></div>
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fz-total-fr"></div>
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fz-total-rl"></div>
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fz-total-rr"></div>
+            </div>
+          </div>
+          <div class="force-block" id="sens-block-fy">
+            <div class="force-block-title">Fy per Wheel</div>
+            <div class="force-grid sens-force-grid">
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fy-fl"></div>
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fy-fr"></div>
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fy-rl"></div>
+              <div class="sim-chart-container sens-grid-chart" id="sens-plot-fy-rr"></div>
+            </div>
+          </div>
+          <div class="sim-chart-container" id="sens-plot-aero-total"></div>
+          <div class="sim-chart-container" id="sens-plot-aero-balance"></div>
+          <div class="sim-chart-container" id="sens-plot-drag"></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="optimization-view" style="display:none;">
+      <div class="view-head">
+        <h2>Optimization</h2>
+      </div>
+      <div class="grid">
+        <section class="panel">
+          <h2>0) Load Setup JSON</h2>
+          <input id="opt_jsonFile" type="file" accept=".json" style="display:none;" />
+          <div class="file-actions">
+            <button id="opt_btnStageFile" class="file-pill-btn file-pill-muted" disabled>
+              <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 21V4"></path>
+                <path d="M5 5h10l-2 3 2 3H5z"></path>
+              </svg>
+              <span>Stage Car</span>
+            </button>
+            <button id="opt_btnLoadCar" class="file-pill-btn file-pill-bright">
+              <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 21V8"></path>
+                <path d="M7.5 12.5L12 8l4.5 4.5"></path>
+                <path d="M4 21h16"></path>
+              </svg>
+              <span>Load Car</span>
+            </button>
+            <button id="opt_btnViewSetup" class="file-pill-btn file-pill-muted" disabled>
+              <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"></path>
+              </svg>
+              <span>View Setup</span>
+            </button>
+          </div>
+          <p id="opt_fileName" class="muted" style="margin-top:6px;">No file selected.</p>
+          <p id="opt_loadStatus" class="muted">No JSON loaded.</p>
+
+          <h2>1) Objective</h2>
+          <div class="chart-card">
+            <div class="row">
+              <div>
+                <label>Objective mode</label>
+                <select id="opt_objective_mode">
+                  <option value="maximize">Maximize</option>
+                  <option value="minimize">Minimize</option>
+                  <option value="target">Match Target</option>
+                </select>
+              </div>
+              <div>
+                <label>Objective variable</label>
+                <select id="opt_objective_name"></select>
+              </div>
+            </div>
+            <div class="row" id="opt_objective_target_wrap" style="display:none;">
+              <div>
+                <label>Target value</label>
+                <input id="opt_objective_target" type="number" step="0.01" value="44">
+              </div>
+            </div>
+          </div>
+
+          <h2 style="margin-top:14px;">2) Decision Variables</h2>
+          <div class="chart-card">
+            <div class="row">
+              <div><label><input id="opt_var_front_heave_enabled" type="checkbox" checked> Front Heave (compression +)</label></div>
+              <div><label><input id="opt_var_rear_heave_enabled" type="checkbox" checked> Rear Heave (compression +)</label></div>
+            </div>
+            <div class="row">
+              <div><label>Front Heave min [mm] (compression +)</label><input id="opt_var_front_heave_min" type="number" value="-20" step="0.1"></div>
+              <div><label>Rear Heave min [mm] (compression +)</label><input id="opt_var_rear_heave_min" type="number" value="-20" step="0.1"></div>
+            </div>
+            <div class="row">
+              <div><label>Front Heave max [mm] (compression +)</label><input id="opt_var_front_heave_max" type="number" value="20" step="0.1"></div>
+              <div><label>Rear Heave max [mm] (compression +)</label><input id="opt_var_rear_heave_max" type="number" value="20" step="0.1"></div>
+            </div>
+            <div class="row">
+              <div><label>Front Heave initial [mm] (compression +)</label><input id="opt_var_front_heave_init" type="number" value="0" step="0.1"></div>
+              <div><label>Rear Heave initial [mm] (compression +)</label><input id="opt_var_rear_heave_init" type="number" value="0" step="0.1"></div>
+            </div>
+            <hr style="border:none;border-top:1px solid #dbe3ef;margin:10px 0;">
+            <div class="row">
+              <div><label><input id="opt_var_front_roll_enabled" type="checkbox" checked> Front Roll</label></div>
+              <div><label><input id="opt_var_rear_roll_enabled" type="checkbox" checked> Rear Roll</label></div>
+            </div>
+            <div class="row">
+              <div><label>Front Roll min [deg]</label><input id="opt_var_front_roll_min" type="number" value="-6" step="0.01"></div>
+              <div><label>Rear Roll min [deg]</label><input id="opt_var_rear_roll_min" type="number" value="-6" step="0.01"></div>
+            </div>
+            <div class="row">
+              <div><label>Front Roll max [deg]</label><input id="opt_var_front_roll_max" type="number" value="6" step="0.01"></div>
+              <div><label>Rear Roll max [deg]</label><input id="opt_var_rear_roll_max" type="number" value="6" step="0.01"></div>
+            </div>
+            <div class="row">
+              <div><label>Front Roll initial [deg]</label><input id="opt_var_front_roll_init" type="number" value="0" step="0.01"></div>
+              <div><label>Rear Roll initial [deg]</label><input id="opt_var_rear_roll_init" type="number" value="0" step="0.01"></div>
+            </div>
+          </div>
+
+          <h2 style="margin-top:14px;">3) Constraints</h2>
+          <div class="chart-card">
+            <div class="row">
+              <div><button id="opt_add_constraint" class="secondary">Add Constraint</button></div>
+            </div>
+            <div id="opt_constraints_wrap"></div>
+          </div>
+
+          <h2 style="margin-top:14px;">4) Fixed Inputs</h2>
+          <div class="chart-card">
+            <div class="row">
+              <div><label>Speed [kph]</label><input id="opt_speed_kph" type="number" value="220" step="1"></div>
+              <div><label>Air density [kg/m3]</label><input id="opt_air_density" type="number" value="1.225" step="0.001"></div>
+            </div>
+            <div class="row">
+              <div><label>DRS</label><select id="opt_drs_on"><option value="false">Off</option><option value="true">On</option></select></div>
+              <div><label>Acceleration units</label><select id="opt_acc_units"><option value="g">g</option><option value="mps2">m/s2</option></select></div>
+            </div>
+            <div class="row">
+              <div><label>Lateral acceleration</label><input id="opt_ay" type="number" value="0" step="0.01"></div>
+              <div><label>Longitudinal acceleration</label><input id="opt_ax" type="number" value="0" step="0.01"></div>
+            </div>
+            <div class="row">
+              <div><label>Slip angle FL [deg]</label><input id="opt_sa_fl" type="number" value="4" step="0.1"></div>
+              <div><label>Slip angle FR [deg]</label><input id="opt_sa_fr" type="number" value="4" step="0.1"></div>
+            </div>
+            <div class="row">
+              <div><label>Slip angle RL [deg]</label><input id="opt_sa_rl" type="number" value="4" step="0.1"></div>
+              <div><label>Slip angle RR [deg]</label><input id="opt_sa_rr" type="number" value="4" step="0.1"></div>
+            </div>
+            <div class="row">
+              <div><label>Slip ratio FL</label><input id="opt_sr_fl" type="number" value="0" step="0.01"></div>
+              <div><label>Slip ratio FR</label><input id="opt_sr_fr" type="number" value="0" step="0.01"></div>
+            </div>
+            <div class="row">
+              <div><label>Slip ratio RL</label><input id="opt_sr_rl" type="number" value="0" step="0.01"></div>
+              <div><label>Slip ratio RR</label><input id="opt_sr_rr" type="number" value="0" step="0.01"></div>
+            </div>
+          </div>
+
+          <h2 style="margin-top:14px;">5) Search Settings</h2>
+          <div class="chart-card">
+            <div class="row">
+              <div>
+                <label>Search method</label>
+                <select id="opt_search_method">
+                  <option value="auto">Auto</option>
+                  <option value="grid_refine">Grid + Refine</option>
+                  <option value="sample_refine">Sample + Refine</option>
+                </select>
+              </div>
+              <div><label>Max global points</label><input id="opt_max_global_points" type="number" value="180" step="1" min="10"></div>
+            </div>
+            <div class="row">
+              <div><label>Best candidates to refine</label><input id="opt_n_best_candidates" type="number" value="5" step="1" min="1"></div>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px;">
+            <div><button id="opt_run_btn">Run Optimization</button></div>
+          </div>
+          <p id="opt_status" class="muted" style="margin-top:6px;">Configure optimization and click Run Optimization.</p>
+          <div id="opt_loading_overlay" class="panel-loading-overlay" aria-hidden="true">
+            <div class="panel-loading-box">
+              <span class="panel-loading-spinner" aria-hidden="true"></span>
+              <span>Optimization running... please wait.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px;flex-wrap:wrap;">
+            <h2 style="margin:0;">Results</h2>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button id="opt_export_pdf" class="secondary" style="width:auto;min-width:150px;" disabled>Export PDF</button>
+              <button id="opt_export_csv_top" class="secondary" style="width:auto;min-width:150px;" disabled>Export CSV Top</button>
+              <button id="opt_export_csv_global" class="secondary" style="width:auto;min-width:170px;" disabled>Export CSV Global</button>
+            </div>
+          </div>
+          <h3>Best Solution Summary</h3>
+          <div id="opt_best_summary" class="muted">No optimization run yet.</div>
+          <h3 style="margin-top:14px;">Best Physical Outputs</h3>
+          <div id="opt_best_outputs" class="muted">No outputs yet.</div>
+          <h3 style="margin-top:14px;display:none;">Top Candidates</h3>
+          <div id="opt_top_table_wrap" style="overflow:auto;max-height:320px;display:none;"></div>
+          <h3 style="margin-top:14px;display:none;">Diagnostics</h3>
+          <div id="opt_diag" class="muted" style="display:none;"></div>
+          <div class="sim-chart-container" id="opt-plot-cost" style="display:none;"></div>
+          <div class="sim-chart-container" id="opt-plot-objective" style="display:none;"></div>
+
+          <div class="custom-builder" style="margin-top:14px;display:none;">
+            <h3>Custom Plot Builder</h3>
+            <div class="custom-grid-3">
+              <div>
+                <label>Mode</label>
+                <select id="opt_custom_mode">
+                  <option value="2d">2D</option>
+                  <option value="3d">3D</option>
+                </select>
+              </div>
+              <div>
+                <label>X axis</label>
+                <select id="opt_custom_x"><option value="">Select variable</option></select>
+              </div>
+              <div>
+                <label>Y axis</label>
+                <select id="opt_custom_y"><option value="">Select variable</option></select>
+              </div>
+            </div>
+            <div class="custom-grid" id="opt_custom_z_wrap" style="display:none;">
+              <div>
+                <label>Z axis</label>
+                <select id="opt_custom_z"><option value="">Select variable</option></select>
+              </div>
+            </div>
+            <div class="custom-grid">
+              <div>
+                <label>Chart name</label>
+                <input id="opt_custom_title" type="text" placeholder="Custom chart name">
+              </div>
+            </div>
+            <div class="custom-actions">
+              <button id="opt_custom_add" class="secondary">Add Custom Chart</button>
+              <button id="opt_custom_clear">Clear Custom Charts</button>
+            </div>
+            <p id="opt_custom_status" class="muted" style="margin-top:8px;">Run optimization to enable custom charts.</p>
+          </div>
+          <div id="opt_custom_charts" style="display:none;"></div>
+        </section>
+      </div>
+    </section>
+  </div>
+
+  <div id="report_modal" class="report-modal" aria-hidden="true">
+    <div class="report-editor">
+      <div class="report-head">
+        <h2>PDF Report Editor</h2>
+        <button id="report_close_btn">Close</button>
+      </div>
+      <p class="muted" id="report_editor_status">Preparing charts...</p>
+      <div id="report_editor_list" class="report-list"></div>
+      <div class="report-foot">
+        <button id="report_export_btn" class="secondary">Export PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="setup_modal" class="report-modal" aria-hidden="true">
+    <div class="report-editor">
+      <div class="report-head">
+        <h2>Setup Viewer</h2>
+        <button id="setup_close_btn">Close</button>
+      </div>
+      <p class="muted" id="setup_view_status">Preparing setup data...</p>
+      <div class="setup-scroll-block">
+        <table class="setup-table">
+          <thead>
+            <tr><th style="width:40%;">Field</th><th>Value</th></tr>
+          </thead>
+          <tbody id="setup_fields_body"></tbody>
+        </table>
+      </div>
+      <div class="setup-chart-grid">
+        <div id="setup_aero_front_plot" class="setup-chart"></div>
+        <div id="setup_aero_rear_plot" class="setup-chart"></div>
+        <div id="setup_aero_map_plot" class="setup-chart"></div>
+        <div id="setup_aero_map_drs_plot" class="setup-chart"></div>
+        <div id="setup_tyre_fy_plot" class="setup-chart"></div>
+        <div id="setup_tyre_fx_plot" class="setup-chart"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const DynStore = { rows: [], csv: "", speedMode: "single", speedValues: [], lastData: null };
+    const SensStore = { jsonData: null, csv: "", lastData: null, hasData: false };
+    const OptStore = { result: null, globalCandidates: [], topCandidates: [], hasData: false, jsonData: null };
+    const CompareStore = {
+      pendingFiles: [],
+      setups: [],
+      savedResults: [],
+      lastComparison: null,
+      lastSavedPair: null
+    };
+    const CustomStore = { seq: 0 };
+    const ReportEditorStore = { items: [], statusTarget: "cmpres_status", reportTitle: "Comparison Report" };
+    const SetupViewStore = { data: null };
+    const INPUT_PRESET_KEY = "dynamic_input_presets_v1";
+    let InputPresets = [];
+    let hasData = false;
+    const $ = (id) => document.getElementById(id);
+    const num = (id) => Number($(id).value || 0);
+    const fmt = (v, d = 1) => Number(v || 0).toFixed(d);
+
+    // â”€â”€ Plotly global styling + chart close button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    function addChartCloseBtn(elOrId) {
+      const el = typeof elOrId === "string" ? document.getElementById(elOrId) : elOrId;
+      if (!el || el.querySelector(".chart-close-btn")) return;
+      if (el.closest && el.closest("#setup_modal")) return;
+      const btn = document.createElement("button");
+      btn.className = "chart-close-btn";
+      btn.title = "Remove chart";
+      btn.innerHTML = "&times;";
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (el.classList.contains("custom-plot")) el.remove();
+        else el.style.display = "none";
+      });
+      el.appendChild(btn);
+    }
+    (function patchPlotly() {
+      const _newPlot = Plotly.newPlot.bind(Plotly);
+      const _react   = Plotly.react.bind(Plotly);
+      function patchLayout(l) {
+        l = Object.assign({}, l || {});
+        l.paper_bgcolor = "#ffffff";
+        l.plot_bgcolor  = "#f7f8fa";
+        if (!l.font) l.font = {};
+        l.font.family = l.font.family || "Inter, 'Segoe UI', Arial, sans-serif";
+        l.font.color  = l.font.color  || "#1f2d3d";
+        ["xaxis","xaxis2","yaxis","yaxis2"].forEach(ax => {
+          if (l[ax]) {
+            l[ax].gridcolor     = l[ax].gridcolor     || "#e5e8ef";
+            l[ax].zerolinecolor = l[ax].zerolinecolor || "#cdd3df";
+          }
+        });
+        return l;
+      }
+      function patchConfig(c) {
+        c = Object.assign({ responsive: true }, c || {});
+        c.displaylogo    = false;
+        c.displayModeBar = "hover";
+        return c;
+      }
+      function afterPlot(elOrId) {
+        const el = typeof elOrId === "string" ? document.getElementById(elOrId) : elOrId;
+        if (el) addChartCloseBtn(el);
+      }
+      Plotly.newPlot = function(el, data, layout, config) {
+        const r = _newPlot(el, data, patchLayout(layout), patchConfig(config));
+        if (r && typeof r.then === "function") r.then(() => afterPlot(el)); else afterPlot(el);
+        return r;
+      };
+      Plotly.react = function(el, data, layout, config) {
+        const r = _react(el, data, patchLayout(layout), patchConfig(config));
+        if (r && typeof r.then === "function") r.then(() => afterPlot(el)); else afterPlot(el);
+        return r;
+      };
+    })();
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    const INPUT_FIELDS = [
+      "air_density", "speed_mode", "speed_kph", "speed_min_kph", "speed_max_kph", "speed_step_kph", "drs_on", "drs_on_single",
+      "sweep_variable", "acc_units", "sweep_min", "sweep_max", "sweep_step",
+      "front_min", "front_max", "front_step", "rear_min", "rear_max", "rear_step",
+      "ax", "ay", "sa_fl", "sa_fr", "sa_rl", "sa_rr", "sr_fl", "sr_fr", "sr_rl", "sr_rr"
+    ];
+
+    function presetId(prefix, field) {
+      return prefix === "cmp" ? `cmp_${field}` : field;
+    }
+
+    function readInputs(prefix) {
+      const out = {};
+      INPUT_FIELDS.forEach((f) => {
+        const el = $(presetId(prefix, f));
+        if (el) out[f] = el.value;
+      });
+      return out;
+    }
+
+    function applyInputs(prefix, values) {
+      INPUT_FIELDS.forEach((f) => {
+        const el = $(presetId(prefix, f));
+        if (!el) return;
+        if (values[f] !== undefined && values[f] !== null) el.value = String(values[f]);
+      });
+      if (prefix === "cmp") {
+        cmpToggleSpeedMode();
+        cmpToggleSweepMode();
+      } else {
+        dynToggleSpeedMode();
+        dynToggleSweepMode();
+      }
+    }
+
+    function loadInputPresets() {
+      try {
+        const raw = localStorage.getItem(INPUT_PRESET_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        InputPresets = Array.isArray(arr) ? arr : [];
+      } catch (e) {
+        InputPresets = [];
+      }
+    }
+
+    function saveInputPresets() {
+      try {
+        localStorage.setItem(INPUT_PRESET_KEY, JSON.stringify(InputPresets));
+      } catch (e) {
+        // Ignore storage errors.
+      }
+    }
+
+    function refreshInputPresetSelectors() {
+      const options = [`<option value="">Select preset</option>`]
+        .concat(InputPresets.map((p) => `<option value="${p.name}">${p.name}</option>`))
+        .join("");
+      $("dyn_input_preset_select").innerHTML = options;
+      $("cmp_input_preset_select").innerHTML = options;
+      const msg = InputPresets.length ? `${InputPresets.length} input preset(s) available.` : "No input presets saved yet.";
+      $("dyn_input_preset_status").textContent = msg;
+      $("cmp_input_preset_status").textContent = msg;
+    }
+
+    function saveInputPresetFrom(prefix) {
+      const statusId = prefix === "cmp" ? "cmp_input_preset_status" : "dyn_input_preset_status";
+      const selectId = prefix === "cmp" ? "cmp_input_preset_select" : "dyn_input_preset_select";
+      const suggested = $(selectId).value || "";
+      const name = (window.prompt("Preset name:", suggested) || "").trim();
+      if (!name) {
+        $(statusId).textContent = "Save cancelled.";
+        return;
+      }
+      const values = readInputs(prefix);
+      const idx = InputPresets.findIndex((p) => p.name === name);
+      if (idx >= 0) InputPresets[idx] = { name, values };
+      else InputPresets.push({ name, values });
+      saveInputPresets();
+      refreshInputPresetSelectors();
+      $("dyn_input_preset_select").value = name;
+      $("cmp_input_preset_select").value = name;
+      $(statusId).textContent = `Preset "${name}" saved.`;
+    }
+
+    function applyInputPresetTo(prefix) {
+      const statusId = prefix === "cmp" ? "cmp_input_preset_status" : "dyn_input_preset_status";
+      const selectId = prefix === "cmp" ? "cmp_input_preset_select" : "dyn_input_preset_select";
+      const name = $(selectId).value;
+      if (!name) {
+        $(statusId).textContent = "Select a preset first.";
+        return;
+      }
+      const preset = InputPresets.find((p) => p.name === name);
+      if (!preset) {
+        $(statusId).textContent = "Preset not found.";
+        return;
+      }
+      applyInputs(prefix, preset.values || {});
+      $(statusId).textContent = `Preset "${name}" applied.`;
+    }
+
+    function deleteInputPreset(prefix) {
+      const statusId = prefix === "cmp" ? "cmp_input_preset_status" : "dyn_input_preset_status";
+      const selectId = prefix === "cmp" ? "cmp_input_preset_select" : "dyn_input_preset_select";
+      const name = $(selectId).value;
+      if (!name) {
+        $(statusId).textContent = "Select a preset first.";
+        return;
+      }
+      InputPresets = InputPresets.filter((p) => p.name !== name);
+      saveInputPresets();
+      refreshInputPresetSelectors();
+      $(statusId).textContent = `Preset "${name}" deleted.`;
+    }
+
+    const CustomCfg = {
+      dyn: {
+        mode: "dyn_custom_mode", x: "dyn_custom_x", y: "dyn_custom_y", z: "dyn_custom_z", zWrap: "dyn_custom_z_wrap",
+        title: "dyn_custom_title",
+        add: "dyn_custom_add", clear: "dyn_custom_clear", status: "dyn_custom_status", container: "dyn_custom_charts", source: null
+      },
+      cmp: {
+        mode: "cmp_custom_mode", x: "cmp_custom_x", y: "cmp_custom_y", z: "cmp_custom_z", zWrap: "cmp_custom_z_wrap",
+        title: "cmp_custom_title",
+        add: "cmp_custom_add", clear: "cmp_custom_clear", status: "cmp_custom_status", container: "cmp_custom_charts", source: "cmp_custom_source"
+      },
+      cmpres: {
+        mode: "cmpres_custom_mode", x: "cmpres_custom_x", y: "cmpres_custom_y", z: "cmpres_custom_z", zWrap: "cmpres_custom_z_wrap",
+        title: "cmpres_custom_title",
+        add: "cmpres_custom_add", clear: "cmpres_custom_clear", status: "cmpres_custom_status", container: "cmpres_custom_charts", source: "cmpres_custom_source"
+      },
+      opt: {
+        mode: "opt_custom_mode", x: "opt_custom_x", y: "opt_custom_y", z: "opt_custom_z", zWrap: "opt_custom_z_wrap",
+        title: "opt_custom_title",
+        add: "opt_custom_add", clear: "opt_custom_clear", status: "opt_custom_status", container: "opt_custom_charts", source: null
+      }
+    };
+
+    function customNumericKeys(rows) {
+      if (!Array.isArray(rows) || !rows.length) return [];
+      return Object.keys(rows[0]).filter((k) => rows.every((r) => Number.isFinite(Number(r[k]))));
+    }
+
+    function customSetOptions(selectId, keys) {
+      const sel = $(selectId);
+      if (!sel) return;
+      const current = sel.value;
+      sel.innerHTML = `<option value="">Select variable</option>` + keys.map((k) => `<option value="${k}">${k}</option>`).join("");
+      if (current && keys.includes(current)) sel.value = current;
+      if (!sel.value && keys.length) sel.value = keys[0];
+    }
+
+    function customToggleMode(cfg) {
+      const mode = $(cfg.mode).value;
+      $(cfg.zWrap).style.display = mode === "3d" ? "" : "none";
+    }
+
+    function customClearCharts(cfg) {
+      const el = $(cfg.container);
+      if (el) el.innerHTML = "";
+    }
+
+    function customCreateChartHost(cfg) {
+      const host = document.createElement("div");
+      host.className = "custom-plot";
+      const id = `${cfg.container}_plot_${++CustomStore.seq}`;
+      host.id = id;
+      $(cfg.container).appendChild(host);
+      return { id };
+    }
+
+    function customRowsFromData(data) {
+      return cmpRowsForPlot(data);
+    }
+
+    function customContextRows(viewKey, source) {
+      if (viewKey === "dyn") {
+        return [{ name: "Calculator", rows: DynStore.rows || [] }];
+      }
+      if (viewKey === "cmp") {
+        const c = CompareStore.lastComparison;
+        if (!c) return [];
+        if (source === "both") {
+          return [
+            { name: c.aName, rows: customRowsFromData(c.aData) },
+            { name: c.bName, rows: customRowsFromData(c.bData) }
+          ];
+        }
+        if (source === "b") return [{ name: c.bName, rows: customRowsFromData(c.bData) }];
+        return [{ name: c.aName, rows: customRowsFromData(c.aData) }];
+      }
+      if (viewKey === "cmpres") {
+        const c = CompareStore.lastSavedPair;
+        if (!c) return [];
+        if (source === "both") {
+          return [
+            { name: c.aName, rows: customRowsFromData(c.aData) },
+            { name: c.bName, rows: customRowsFromData(c.bData) }
+          ];
+        }
+        if (source === "b") return [{ name: c.bName, rows: customRowsFromData(c.bData) }];
+        return [{ name: c.aName, rows: customRowsFromData(c.aData) }];
+      }
+      if (viewKey === "sens") {
+        return [{ name: "Sensitivity", rows: SensStore.lastData?.rows || [] }];
+      }
+      if (viewKey === "opt") {
+        const rows = (OptStore.globalCandidates || []).map((c) => ({
+          ...(c.decision_vector || {}),
+          ...(c.outputs || {}),
+          objective_value_raw: Number(c.objective_value_raw || 0),
+          penalty_value: Number(c.penalty_value || 0),
+          total_cost: Number(c.total_cost || 0),
+        }));
+        return [{ name: "Optimization", rows }];
+      }
+      return [];
+    }
+
+    function customRefreshBuilder(viewKey) {
+      const cfg = CustomCfg[viewKey];
+      const source = cfg.source ? $(cfg.source).value : "a";
+      const contexts = customContextRows(viewKey, source === "both" ? "a" : source);
+      const baseRows = contexts[0]?.rows || [];
+      const keys = customNumericKeys(baseRows);
+      customSetOptions(cfg.x, keys);
+      customSetOptions(cfg.y, keys);
+      customSetOptions(cfg.z, keys);
+      customToggleMode(cfg);
+      if (!keys.length) {
+        $(cfg.status).textContent = "No numeric data available for custom plots yet.";
+      }
+    }
+
+    function customAddPlot(viewKey) {
+      const cfg = CustomCfg[viewKey];
+      const mode = $(cfg.mode).value;
+      const source = cfg.source ? $(cfg.source).value : "a";
+      const xKey = $(cfg.x).value;
+      const yKey = $(cfg.y).value;
+      const zKey = $(cfg.z).value;
+      const titleInput = cfg.title ? $(cfg.title) : null;
+      const customTitle = (titleInput?.value || "").trim();
+      if (!xKey || !yKey || (mode === "3d" && !zKey)) {
+        $(cfg.status).textContent = "Select valid axis variables first.";
+        return;
+      }
+      const contexts = customContextRows(viewKey, source);
+      if (!contexts.length) {
+        $(cfg.status).textContent = "No data available. Run or select results first.";
+        return;
+      }
+      if (mode === "3d" && source === "both") {
+        $(cfg.status).textContent = "3D mode supports a single source. Choose A or B.";
+        return;
+      }
+      const allRows = contexts.filter(c => c.rows?.length);
+      if (!allRows.length) {
+        $(cfg.status).textContent = "Selected source has no data.";
+        return;
+      }
+
+      const { id } = customCreateChartHost(cfg);
+      if (mode === "2d") {
+        const plotTitle = customTitle || `${mode.toUpperCase()} Custom Plot`;
+        const traces = allRows.map((ctx, idx) => ({
+          x: ctx.rows.map(r => Number(r[xKey])),
+          y: ctx.rows.map(r => Number(r[yKey])),
+          mode: "lines+markers",
+          name: `${ctx.name} (${yKey})`,
+          line: { width: 2, dash: idx > 0 ? "dot" : "solid" }
+        }));
+        Plotly.newPlot(id, traces, {
+          title: plotTitle,
+          xaxis: { title: xKey, automargin: true },
+          yaxis: { title: yKey, automargin: true },
+          margin: { t: 46, r: 20, b: 62, l: 86 },
+          legend: { orientation: "h", y: -0.22, x: 0 }
+        }, { responsive: true });
+      } else {
+        const ctx = allRows[0];
+        const plotTitle = customTitle || `3D Custom Plot (${ctx.name})`;
+        Plotly.newPlot(id, [{
+          type: "scatter3d",
+          mode: "markers+lines",
+          x: ctx.rows.map(r => Number(r[xKey])),
+          y: ctx.rows.map(r => Number(r[yKey])),
+          z: ctx.rows.map(r => Number(r[zKey])),
+          name: ctx.name,
+          marker: { size: 3 }
+        }], {
+          title: plotTitle,
+          scene: { xaxis: { title: xKey }, yaxis: { title: yKey }, zaxis: { title: zKey } },
+          margin: { t: 40, r: 8, b: 8, l: 8 }
+        }, { responsive: true });
+      }
+      $(cfg.status).textContent = "Custom chart added.";
+    }
+
+    function dynToggleSpeedMode() {
+      const rangeMode = $("speed_mode").value === "range";
+      $("speed_single_wrap").style.display = rangeMode ? "none" : "";
+      $("speed_range_wrap").style.display = rangeMode ? "" : "none";
+      $("speed_step_wrap").style.display = rangeMode ? "" : "none";
+      $("speed_drs_single_wrap").style.display = rangeMode ? "none" : "";
+    }
+
+    function dynToggleSweepMode() {
+      const custom = $("sweep_variable").value === "roll_custom" || $("sweep_variable").value === "heave_custom";
+      $("sweep_normal_wrap").style.display = custom ? "none" : "";
+      $("sweep_normal_step_wrap").style.display = custom ? "none" : "";
+      $("sweep_custom_wrap").style.display = custom ? "" : "none";
+    }
+
+    function dynPayload() {
+      const speedMode = $("speed_mode").value;
+      const sweepVariable = $("sweep_variable").value;
+      const payload = {
+        air_density: num("air_density"),
+        speed_mode: speedMode,
+        drs_on: speedMode === "range" ? $("drs_on").value === "true" : $("drs_on_single").value === "true",
+        sweep_variable: sweepVariable,
+        acc_units: $("acc_units").value,
+        ax: num("ax"),
+        ay: num("ay"),
+        slip_angle_fl_deg: num("sa_fl"),
+        slip_angle_fr_deg: num("sa_fr"),
+        slip_angle_rl_deg: num("sa_rl"),
+        slip_angle_rr_deg: num("sa_rr"),
+        slip_ratio_fl: num("sr_fl"),
+        slip_ratio_fr: num("sr_fr"),
+        slip_ratio_rl: num("sr_rl"),
+        slip_ratio_rr: num("sr_rr"),
+      };
+      if (speedMode === "range") {
+        payload.speed_min_kph = num("speed_min_kph");
+        payload.speed_max_kph = num("speed_max_kph");
+        payload.speed_step_kph = num("speed_step_kph");
+      } else {
+        payload.speed_kph = num("speed_kph");
+      }
+      if (sweepVariable === "roll_custom" || sweepVariable === "heave_custom") {
+        payload.front_min = num("front_min");
+        payload.front_max = num("front_max");
+        payload.front_step = num("front_step");
+        payload.rear_min = num("rear_min");
+        payload.rear_max = num("rear_max");
+        payload.rear_step = num("rear_step");
+      } else {
+        payload.sweep_min = num("sweep_min");
+        payload.sweep_max = num("sweep_max");
+        payload.sweep_step = num("sweep_step");
+      }
+      return payload;
+    }
+
+    function cmpToggleSpeedMode() {
+      const rangeMode = $("cmp_speed_mode").value === "range";
+      $("cmp_speed_single_wrap").style.display = rangeMode ? "none" : "";
+      $("cmp_speed_range_wrap").style.display = rangeMode ? "" : "none";
+      $("cmp_speed_step_wrap").style.display = rangeMode ? "" : "none";
+      $("cmp_speed_drs_single_wrap").style.display = rangeMode ? "none" : "";
+    }
+
+    function cmpToggleSweepMode() {
+      const custom = $("cmp_sweep_variable").value === "roll_custom" || $("cmp_sweep_variable").value === "heave_custom";
+      $("cmp_sweep_normal_wrap").style.display = custom ? "none" : "";
+      $("cmp_sweep_normal_step_wrap").style.display = custom ? "none" : "";
+      $("cmp_sweep_custom_wrap").style.display = custom ? "" : "none";
+    }
+
+    function cmpPayload() {
+      const speedMode = $("cmp_speed_mode").value;
+      const sweepVariable = $("cmp_sweep_variable").value;
+      const payload = {
+        air_density: Number($("cmp_air_density").value || 0),
+        speed_mode: speedMode,
+        drs_on: speedMode === "range" ? $("cmp_drs_on").value === "true" : $("cmp_drs_on_single").value === "true",
+        sweep_variable: sweepVariable,
+        acc_units: $("cmp_acc_units").value,
+        ax: Number($("cmp_ax").value || 0),
+        ay: Number($("cmp_ay").value || 0),
+        slip_angle_fl_deg: Number($("cmp_sa_fl").value || 0),
+        slip_angle_fr_deg: Number($("cmp_sa_fr").value || 0),
+        slip_angle_rl_deg: Number($("cmp_sa_rl").value || 0),
+        slip_angle_rr_deg: Number($("cmp_sa_rr").value || 0),
+        slip_ratio_fl: Number($("cmp_sr_fl").value || 0),
+        slip_ratio_fr: Number($("cmp_sr_fr").value || 0),
+        slip_ratio_rl: Number($("cmp_sr_rl").value || 0),
+        slip_ratio_rr: Number($("cmp_sr_rr").value || 0),
+      };
+      if (speedMode === "range") {
+        payload.speed_min_kph = Number($("cmp_speed_min_kph").value || 0);
+        payload.speed_max_kph = Number($("cmp_speed_max_kph").value || 0);
+        payload.speed_step_kph = Number($("cmp_speed_step_kph").value || 0);
+      } else {
+        payload.speed_kph = Number($("cmp_speed_kph").value || 0);
+      }
+      if (sweepVariable === "roll_custom" || sweepVariable === "heave_custom") {
+        payload.front_min = Number($("cmp_front_min").value || 0);
+        payload.front_max = Number($("cmp_front_max").value || 0);
+        payload.front_step = Number($("cmp_front_step").value || 0);
+        payload.rear_min = Number($("cmp_rear_min").value || 0);
+        payload.rear_max = Number($("cmp_rear_max").value || 0);
+        payload.rear_step = Number($("cmp_rear_step").value || 0);
+      } else {
+        payload.sweep_min = Number($("cmp_sweep_min").value || 0);
+        payload.sweep_max = Number($("cmp_sweep_max").value || 0);
+        payload.sweep_step = Number($("cmp_sweep_step").value || 0);
+      }
+      return payload;
+    }
+
+    function cmpReadJsonFile(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const parsed = JSON.parse(String(reader.result || "{}"));
+            resolve(parsed);
+          } catch (err) {
+            reject(new Error("Invalid JSON file."));
+          }
+        };
+        reader.onerror = () => reject(new Error("Could not read file."));
+        reader.readAsText(file);
+      });
+    }
+
+    function cmpRowsForPlot(data) {
+      const rows = Array.isArray(data?.rows) ? data.rows : [];
+      if (!rows.length) return [];
+      const mode = String(data?.speed_mode || "single");
+      if (mode !== "range") return rows;
+      const speeds = [...new Set(rows.map(r => Number(r.speed_kph)))].filter(v => Number.isFinite(v)).sort((a, b) => a - b);
+      if (!speeds.length) return rows;
+      const targetSpeed = speeds[0];
+      return rows.filter(r => Math.abs(Number(r.speed_kph) - targetSpeed) < 1e-9);
+    }
+
+    function cmpRefreshSetupSelectors() {
+      const selA = $("cmp_setup_a");
+      const selB = $("cmp_setup_b");
+      const currentA = selA.value;
+      const currentB = selB.value;
+      const options = [`<option value="">Select setup</option>`]
+        .concat(CompareStore.setups.map(s => `<option value="${s.id}">${s.name}</option>`))
+        .join("");
+      selA.innerHTML = options;
+      selB.innerHTML = options;
+
+      if (currentA && CompareStore.setups.some(s => s.id === currentA)) selA.value = currentA;
+      if (currentB && CompareStore.setups.some(s => s.id === currentB)) selB.value = currentB;
+
+      if (!selA.value && CompareStore.setups[0]) selA.value = CompareStore.setups[0].id;
+      if (!selB.value && CompareStore.setups[1]) selB.value = CompareStore.setups[1].id;
+      if (!selB.value && CompareStore.setups[0]) selB.value = CompareStore.setups[0].id;
+    }
+
+    async function cmpRunSetupData(setupData) {
+      const payload = cmpPayload();
+      payload.json_data = setupData;
+      const res = await fetch("/api/simulate_dynamic_aero", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const json = await res.json();
+      if (json.status !== "success") {
+        throw new Error(json.message || "Simulation error");
+      }
+      return json.data || null;
+    }
+
+    function cmpGetSetupById(id) {
+      return CompareStore.setups.find(s => s.id === id) || null;
+    }
+
+    function cmpRender(dataA, dataB, nameA, nameB, targets = null) {
+      if (!window.Plotly) return;
+      if (!dataA || !dataB) return;
+      const t = targets || {
+        aero: "cmp-plot-aero",
+        fz: "cmp-plot-fz",
+        fy: "cmp-plot-fy",
+        fx: "cmp-plot-fx",
+        summary: "cmp-summary",
+      };
+
+      const rowsA = cmpRowsForPlot(dataA);
+      const rowsB = cmpRowsForPlot(dataB);
+      if (!rowsA.length || !rowsB.length) return;
+      const xA = rowsA.map(dynToAxisValue);
+      const xB = rowsB.map(dynToAxisValue);
+      const sweepName = rowsA[0]?.sweep_variable || rowsB[0]?.sweep_variable || "sweep";
+
+      Plotly.newPlot(t.aero, [
+        { x: xA, y: rowsA.map(r => r.total_aero_load_n), mode: "lines+markers", name: `${nameA} total aero [N]`, line: { color: "#2f6bb0", width: 2 } },
+        { x: xB, y: rowsB.map(r => r.total_aero_load_n), mode: "lines+markers", name: `${nameB} total aero [N]`, line: { color: "#f26b3a", width: 2 } }
+      ], {
+        title: "Total Aero Load Comparison",
+        xaxis: { title: sweepName, automargin: true },
+        yaxis: { title: { text: "Force [N]", standoff: 12 }, automargin: true },
+        margin: { t: 52, r: 24, b: 72, l: 92 },
+        legend: { orientation: "h", y: -0.24, x: 0.0, xanchor: "left", yanchor: "top" }
+      }, { responsive: true });
+
+      Plotly.newPlot(t.fz, [
+        { x: xA, y: rowsA.map(r => (Number(r.fz_total_fl_n) + Number(r.fz_total_fr_n))), mode: "lines+markers", name: `${nameA} front axle Fz [N]`, line: { color: "#1f77b4", width: 2 } },
+        { x: xA, y: rowsA.map(r => (Number(r.fz_total_rl_n) + Number(r.fz_total_rr_n))), mode: "lines+markers", name: `${nameA} rear axle Fz [N]`, line: { color: "#2ca02c", width: 2 } },
+        { x: xB, y: rowsB.map(r => (Number(r.fz_total_fl_n) + Number(r.fz_total_fr_n))), mode: "lines+markers", name: `${nameB} front axle Fz [N]`, line: { color: "#ff7f0e", width: 2, dash: "dot" } },
+        { x: xB, y: rowsB.map(r => (Number(r.fz_total_rl_n) + Number(r.fz_total_rr_n))), mode: "lines+markers", name: `${nameB} rear axle Fz [N]`, line: { color: "#d62728", width: 2, dash: "dot" } }
+      ], {
+        title: "Axle Vertical Load (Total Fz) Comparison",
+        xaxis: { title: sweepName, automargin: true },
+        yaxis: { title: { text: "Fz [N]", standoff: 12 }, automargin: true },
+        margin: { t: 52, r: 24, b: 72, l: 92 },
+        legend: { orientation: "h", y: -0.24, x: 0.0, xanchor: "left", yanchor: "top" }
+      }, { responsive: true });
+
+      Plotly.newPlot(t.fy, [
+        { x: xA, y: rowsA.map(r => r.fy_total_n), mode: "lines+markers", name: `${nameA} total Fy [N]`, line: { color: "#2f6bb0", width: 2 } },
+        { x: xB, y: rowsB.map(r => r.fy_total_n), mode: "lines+markers", name: `${nameB} total Fy [N]`, line: { color: "#f26b3a", width: 2 } }
+      ], {
+        title: "Total Fy Comparison",
+        xaxis: { title: sweepName, automargin: true },
+        yaxis: { title: { text: "Fy [N]", standoff: 12 }, automargin: true },
+        margin: { t: 52, r: 24, b: 72, l: 92 },
+        legend: { orientation: "h", y: -0.24, x: 0.0, xanchor: "left", yanchor: "top" }
+      }, { responsive: true });
+
+      Plotly.newPlot(t.fx, [
+        { x: xA, y: rowsA.map(r => r.fx_total_n), mode: "lines+markers", name: `${nameA} total Fx [N]`, line: { color: "#2f6bb0", width: 2 } },
+        { x: xB, y: rowsB.map(r => r.fx_total_n), mode: "lines+markers", name: `${nameB} total Fx [N]`, line: { color: "#f26b3a", width: 2 } }
+      ], {
+        title: "Total Fx Comparison",
+        xaxis: { title: sweepName, automargin: true },
+        yaxis: { title: { text: "Fx [N]", standoff: 12 }, automargin: true },
+        margin: { t: 52, r: 24, b: 72, l: 92 },
+        legend: { orientation: "h", y: -0.24, x: 0.0, xanchor: "left", yanchor: "top" }
+      }, { responsive: true });
+
+      const avg = (rows, key) => rows.reduce((acc, r) => acc + Number(r[key] || 0), 0) / rows.length;
+      $(t.summary).textContent =
+        `${nameA} avg Fy: ${fmt(avg(rowsA, "fy_total_n"), 1)} N | ${nameB} avg Fy: ${fmt(avg(rowsB, "fy_total_n"), 1)} N | ` +
+        `${nameA} avg Fx: ${fmt(avg(rowsA, "fx_total_n"), 1)} N | ${nameB} avg Fx: ${fmt(avg(rowsB, "fx_total_n"), 1)} N`;
+    }
+
+    function cmpRefreshSavedResultSelectors() {
+      const selA = $("cmpres_result_a");
+      const selB = $("cmpres_result_b");
+      const currentA = selA.value;
+      const currentB = selB.value;
+      const options = [`<option value="">Select saved result</option>`]
+        .concat(CompareStore.savedResults.map(r => `<option value="${r.id}">${r.label}</option>`))
+        .join("");
+      selA.innerHTML = options;
+      selB.innerHTML = options;
+      if (currentA && CompareStore.savedResults.some(r => r.id === currentA)) selA.value = currentA;
+      if (currentB && CompareStore.savedResults.some(r => r.id === currentB)) selB.value = currentB;
+      if (!selA.value && CompareStore.savedResults[0]) selA.value = CompareStore.savedResults[0].id;
+      if (!selB.value && CompareStore.savedResults[1]) selB.value = CompareStore.savedResults[1].id;
+    }
+
+    function cmpSaveResult(setupName, data, customLabel = "") {
+      const stamp = new Date();
+      const hh = String(stamp.getHours()).padStart(2, "0");
+      const mm = String(stamp.getMinutes()).padStart(2, "0");
+      const ss = String(stamp.getSeconds()).padStart(2, "0");
+      const label = customLabel || `${setupName} | ${hh}:${mm}:${ss}`;
+      CompareStore.savedResults.push({
+        id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        label,
+        setupName,
+        data,
+      });
+      if (CompareStore.savedResults.length > 80) {
+        CompareStore.savedResults = CompareStore.savedResults.slice(-80);
+      }
+      cmpRefreshSavedResultSelectors();
+    }
+
+    function cmpRenderSavedResults() {
+      const idA = $("cmpres_result_a").value;
+      const idB = $("cmpres_result_b").value;
+      if (!idA || !idB) {
+        $("cmpres_status").textContent = "Select Result A and Result B.";
+        return;
+      }
+      if (idA === idB) {
+        $("cmpres_status").textContent = "Choose two different saved results.";
+        return;
+      }
+      const rA = CompareStore.savedResults.find(r => r.id === idA);
+      const rB = CompareStore.savedResults.find(r => r.id === idB);
+      if (!rA || !rB) {
+        $("cmpres_status").textContent = "Selected saved results are not available.";
+        return;
+      }
+      CompareStore.lastSavedPair = {
+        aName: rA.setupName, bName: rB.setupName,
+        aData: rA.data, bData: rB.data
+      };
+      cmpRender(rA.data, rB.data, rA.setupName, rB.setupName, {
+        aero: "cmpres-plot-aero",
+        fz: "cmpres-plot-fz",
+        fy: "cmpres-plot-fy",
+        fx: "cmpres-plot-fx",
+        summary: "cmpres-summary",
+      });
+      customRefreshBuilder("cmpres");
+      $("cmpres_status").textContent = "Saved results comparison completed.";
+    }
+
+    function getPlotTitle(el, fallback) {
+      const t = el?.querySelector?.(".gtitle");
+      const txt = (t?.textContent || "").trim();
+      return txt || fallback || "Chart";
+    }
+
+    function collectReportCharts(context) {
+      const baseMap = {
+        dyn: [
+          { id: "dyn-plot-main", fallback: "Dynamic Simulation Aero Loads" },
+          { id: "dyn-plot-balance", fallback: "Aero Changes vs Reference / Balance" },
+          { id: "dyn-plot-fz-mech", fallback: "Mechanical Fz per Wheel" },
+          { id: "dyn-plot-fz-total", fallback: "Total Fz per Wheel (Mechanical + Aero)" },
+          { id: "dyn-plot-fy-fl", fallback: "Tyre Fy - Front Left" },
+          { id: "dyn-plot-fy-fr", fallback: "Tyre Fy - Front Right" },
+          { id: "dyn-plot-fy-rl", fallback: "Tyre Fy - Rear Left" },
+          { id: "dyn-plot-fy-rr", fallback: "Tyre Fy - Rear Right" },
+          { id: "dyn-plot-fx-fl", fallback: "Tyre Fx - Front Left" },
+          { id: "dyn-plot-fx-fr", fallback: "Tyre Fx - Front Right" },
+          { id: "dyn-plot-fx-rl", fallback: "Tyre Fx - Rear Left" },
+          { id: "dyn-plot-fx-rr", fallback: "Tyre Fx - Rear Right" },
+        ],
+        cmp: [
+          { id: "cmp-plot-aero", fallback: "Total Aero Load Comparison" },
+          { id: "cmp-plot-fz", fallback: "Axle Vertical Load (Total Fz) Comparison" },
+          { id: "cmp-plot-fy", fallback: "Total Fy Comparison" },
+          { id: "cmp-plot-fx", fallback: "Total Fx Comparison" },
+        ],
+        cmpres: [
+          { id: "cmpres-plot-aero", fallback: "Total Aero Load Comparison" },
+          { id: "cmpres-plot-fz", fallback: "Axle Vertical Load (Total Fz) Comparison" },
+          { id: "cmpres-plot-fy", fallback: "Total Fy Comparison" },
+          { id: "cmpres-plot-fx", fallback: "Total Fx Comparison" },
+        ],
+        sens: [
+          { id: "sens-plot-fy-fl", fallback: "Fy FL Sensitivity" },
+          { id: "sens-plot-fy-fr", fallback: "Fy FR Sensitivity" },
+          { id: "sens-plot-fy-rl", fallback: "Fy RL Sensitivity" },
+          { id: "sens-plot-fy-rr", fallback: "Fy RR Sensitivity" },
+          { id: "sens-plot-fz-mech-fl", fallback: "Fz Mechanical FL Sensitivity" },
+          { id: "sens-plot-fz-mech-fr", fallback: "Fz Mechanical FR Sensitivity" },
+          { id: "sens-plot-fz-mech-rl", fallback: "Fz Mechanical RL Sensitivity" },
+          { id: "sens-plot-fz-mech-rr", fallback: "Fz Mechanical RR Sensitivity" },
+          { id: "sens-plot-fz-aero-fl", fallback: "Fz Aero FL Sensitivity" },
+          { id: "sens-plot-fz-aero-fr", fallback: "Fz Aero FR Sensitivity" },
+          { id: "sens-plot-fz-aero-rl", fallback: "Fz Aero RL Sensitivity" },
+          { id: "sens-plot-fz-aero-rr", fallback: "Fz Aero RR Sensitivity" },
+          { id: "sens-plot-fz-total-fl", fallback: "Fz Total FL Sensitivity" },
+          { id: "sens-plot-fz-total-fr", fallback: "Fz Total FR Sensitivity" },
+          { id: "sens-plot-fz-total-rl", fallback: "Fz Total RL Sensitivity" },
+          { id: "sens-plot-fz-total-rr", fallback: "Fz Total RR Sensitivity" },
+          { id: "sens-plot-aero-total", fallback: "Total Aero Load Sensitivity" },
+          { id: "sens-plot-aero-balance", fallback: "Aero Balance Sensitivity" },
+          { id: "sens-plot-drag", fallback: "Drag Sensitivity" },
+        ],
+        opt: [
+          { id: "opt-plot-cost", fallback: "Optimization Cost Top Candidates" },
+          { id: "opt-plot-objective", fallback: "Optimization Objective Top Candidates" },
+        ]
+      };
+      const customMap = {
+        dyn: "dyn_custom_charts",
+        cmp: "cmp_custom_charts",
+        cmpres: "cmpres_custom_charts",
+        opt: "opt_custom_charts",
+      };
+      const base = baseMap[context] || [];
+      const out = [];
+      base.forEach((b) => {
+        const el = $(b.id);
+        if (el && el.classList.contains("js-plotly-plot") && Array.isArray(el.data) && el.data.length) {
+          out.push({ el, title: getPlotTitle(el, b.fallback) });
+        }
+      });
+      const customWrap = $(customMap[context] || "");
+      const custom = Array.from(customWrap?.querySelectorAll(".custom-plot.js-plotly-plot") || []);
+      custom.forEach((el, idx) => {
+        if (Array.isArray(el.data) && el.data.length) {
+          out.push({ el, title: getPlotTitle(el, `Custom Chart ${idx + 1}`) });
+        }
+      });
+      return out;
+    }
+
+    async function plotToDataUrl(el) {
+      try {
+        if (window.Plotly?.toImage) {
+          return await window.Plotly.toImage(el, { format: "png", width: 1400, height: 820, scale: 2 });
+        }
+      } catch (e) {
+        // Fallback below.
+      }
+      if (window.html2canvas) {
+        const canvas = await window.html2canvas(el, { backgroundColor: "#ffffff", scale: 2 });
+        return canvas.toDataURL("image/png");
+      }
+      throw new Error("Could not capture chart image.");
+    }
+
+    function reportRenderEditorList() {
+      const list = $("report_editor_list");
+      list.innerHTML = "";
+      ReportEditorStore.items.forEach((it, idx) => {
+        const card = document.createElement("div");
+        card.className = "report-item";
+        card.innerHTML = `
+          <div class="report-item-head">
+            <p class="report-item-title">${it.title}</p>
+            <button data-remove="${idx}">Remove</button>
+          </div>
+          <img src="${it.image}" alt="${it.title}">
+          <textarea data-comment="${idx}" placeholder="Write comment for this chart...">${it.comment || ""}</textarea>
+        `;
+        list.appendChild(card);
+      });
+      list.querySelectorAll("button[data-remove]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idx = Number(btn.getAttribute("data-remove"));
+          if (Number.isFinite(idx)) {
+            ReportEditorStore.items.splice(idx, 1);
+            reportRenderEditorList();
+          }
+        });
+      });
+      list.querySelectorAll("textarea[data-comment]").forEach((ta) => {
+        ta.addEventListener("input", () => {
+          const idx = Number(ta.getAttribute("data-comment"));
+          if (Number.isFinite(idx) && ReportEditorStore.items[idx]) {
+            ReportEditorStore.items[idx].comment = ta.value;
+          }
+        });
+      });
+    }
+
+    async function openReportEditor(context, statusTarget, reportTitle) {
+      const charts = collectReportCharts(context);
+      if (!charts.length) {
+        $(statusTarget).textContent = "No charts available. Run comparison/simulation first.";
+        return;
+      }
+      ReportEditorStore.statusTarget = statusTarget;
+      ReportEditorStore.reportTitle = reportTitle || "Comparison Report";
+      $("report_modal").classList.add("open");
+      $("report_modal").setAttribute("aria-hidden", "false");
+      $("report_editor_status").textContent = "Preparing charts...";
+      ReportEditorStore.items = [];
+      for (const c of charts) {
+        try {
+          const img = await plotToDataUrl(c.el);
+          ReportEditorStore.items.push({ title: c.title, image: img, comment: "" });
+        } catch (e) {
+          // Skip charts that cannot be captured.
+        }
+      }
+      if (!ReportEditorStore.items.length) {
+        $("report_editor_status").textContent = "No chart images could be prepared.";
+      } else {
+        $("report_editor_status").textContent = "Edit comments or remove charts, then export.";
+      }
+      reportRenderEditorList();
+    }
+
+    function closeReportEditor() {
+      $("report_modal").classList.remove("open");
+      $("report_modal").setAttribute("aria-hidden", "true");
+    }
+
+    function exportReportPdf() {
+      if (!ReportEditorStore.items.length) {
+        $("report_editor_status").textContent = "No charts to export.";
+        return;
+      }
+      if (!window.jspdf?.jsPDF) {
+        $("report_editor_status").textContent = "PDF library not loaded.";
+        return;
+      }
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: "mm", format: "a4" });
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      const margin = 10;
+      const contentW = pageW - margin * 2;
+      let y = margin;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.text(ReportEditorStore.reportTitle || "Comparison Report", margin, y);
+      y += 8;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, margin, y);
+      y += 7;
+
+      ReportEditorStore.items.forEach((it, idx) => {
+        const imgW = contentW;
+        const imgH = imgW * 0.56;
+        const comment = (it.comment || "").trim();
+        const commentLines = comment ? doc.splitTextToSize(comment, contentW) : [];
+        const blockH = 6 + imgH + (commentLines.length ? (commentLines.length * 4 + 4) : 4);
+
+        if (y + blockH > pageH - margin) {
+          doc.addPage();
+          y = margin;
+        }
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11);
+        doc.text(`${idx + 1}. ${it.title}`, margin, y);
+        y += 4;
+
+        doc.addImage(it.image, "PNG", margin, y, imgW, imgH);
+        y += imgH + 4;
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        if (commentLines.length) {
+          doc.text(commentLines, margin, y);
+          y += commentLines.length * 4 + 4;
+        } else {
+          y += 4;
+        }
+      });
+
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, "0");
+      const dd = String(now.getDate()).padStart(2, "0");
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mi = String(now.getMinutes()).padStart(2, "0");
+      const ss = String(now.getSeconds()).padStart(2, "0");
+      doc.save(`compare_report_${yyyy}${mm}${dd}_${hh}${mi}${ss}.pdf`);
+      closeReportEditor();
+      if ($(ReportEditorStore.statusTarget)) {
+        $(ReportEditorStore.statusTarget).textContent = "PDF report exported.";
+      }
+    }
+
+    function setupCloseViewer() {
+      $("setup_modal").classList.remove("open");
+      $("setup_modal").setAttribute("aria-hidden", "true");
+    }
+
+    function setupBuildHeatmapMatrix(rows, xKey, yKey, zKey) {
+      const xVals = [...new Set(rows.map((r) => Number(r[xKey])))].sort((a, b) => a - b);
+      const yVals = [...new Set(rows.map((r) => Number(r[yKey])))].sort((a, b) => a - b);
+      const index = new Map();
+      rows.forEach((r) => {
+        index.set(`${Number(r[xKey])}|${Number(r[yKey])}`, Number(r[zKey]));
+      });
+      const zMat = yVals.map((yv) => xVals.map((xv) => index.get(`${xv}|${yv}`) ?? null));
+      return { xVals, yVals, zMat };
+    }
+
+    function setupRenderFieldTable(fields) {
+      const body = $("setup_fields_body");
+      body.innerHTML = "";
+      (fields || []).forEach((f) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${String(f.key || "")}</td><td>${String(f.value || "")}</td>`;
+        body.appendChild(tr);
+      });
+      if (!body.children.length) {
+        body.innerHTML = `<tr><td colspan="2">No setup fields available.</td></tr>`;
+      }
+    }
+
+    function setupRenderPlots(data) {
+      if (!window.Plotly) return;
+      const aero = data?.aero || {};
+      const front = Array.isArray(aero.front_sweep) ? aero.front_sweep : [];
+      const rear = Array.isArray(aero.rear_sweep) ? aero.rear_sweep : [];
+      const map = Array.isArray(aero.map_no_drs) ? aero.map_no_drs : [];
+      const mapDrs = Array.isArray(aero.map_drs) ? aero.map_drs : [];
+      const tyres = data?.tyres || {};
+      const tyreFront = tyres.front || {};
+      const tyreRear = tyres.rear || {};
+      const fyFront = Array.isArray(tyreFront.fy_vs_slip_angle) ? tyreFront.fy_vs_slip_angle : [];
+      const fyRear = Array.isArray(tyreRear.fy_vs_slip_angle) ? tyreRear.fy_vs_slip_angle : [];
+      const fxFront = Array.isArray(tyreFront.fx_vs_slip_ratio) ? tyreFront.fx_vs_slip_ratio : [];
+      const fxRear = Array.isArray(tyreRear.fx_vs_slip_ratio) ? tyreRear.fx_vs_slip_ratio : [];
+
+      Plotly.newPlot("setup_aero_front_plot", [
+        { x: front.map((r) => Number(r.hRideF) * 1000.0), y: front.map((r) => Number(r.cl_front)), mode: "lines+markers", name: "CL front" },
+        { x: front.map((r) => Number(r.hRideF) * 1000.0), y: front.map((r) => Number(r.cl_rear)), mode: "lines+markers", name: "CL rear" },
+        { x: front.map((r) => Number(r.hRideF) * 1000.0), y: front.map((r) => Number(r.cd_total)), mode: "lines+markers", name: "CD total", yaxis: "y2" },
+      ], {
+        title: "Aero Front-Ride Sweep",
+        xaxis: { title: "hRideF [mm]", automargin: true },
+        yaxis: { title: "Lift coefficient", automargin: true },
+        yaxis2: { title: "Drag coefficient", overlaying: "y", side: "right", automargin: true },
+        legend: { orientation: "h", y: -0.2, x: 0 },
+        margin: { t: 45, r: 56, b: 62, l: 64 },
+      }, { responsive: true });
+
+      Plotly.newPlot("setup_aero_rear_plot", [
+        { x: rear.map((r) => Number(r.hRideR) * 1000.0), y: rear.map((r) => Number(r.cl_front)), mode: "lines+markers", name: "CL front" },
+        { x: rear.map((r) => Number(r.hRideR) * 1000.0), y: rear.map((r) => Number(r.cl_rear)), mode: "lines+markers", name: "CL rear" },
+        { x: rear.map((r) => Number(r.hRideR) * 1000.0), y: rear.map((r) => Number(r.cd_total)), mode: "lines+markers", name: "CD total", yaxis: "y2" },
+      ], {
+        title: "Aero Rear-Ride Sweep",
+        xaxis: { title: "hRideR [mm]", automargin: true },
+        yaxis: { title: "Lift coefficient", automargin: true },
+        yaxis2: { title: "Drag coefficient", overlaying: "y", side: "right", automargin: true },
+        legend: { orientation: "h", y: -0.2, x: 0 },
+        margin: { t: 45, r: 56, b: 62, l: 64 },
+      }, { responsive: true });
+
+      const hm = setupBuildHeatmapMatrix(map, "hRideF", "hRideR", "cl_total");
+      Plotly.newPlot("setup_aero_map_plot", [{
+        type: "heatmap",
+        x: hm.xVals.map((v) => v * 1000.0),
+        y: hm.yVals.map((v) => v * 1000.0),
+        z: hm.zMat,
+        colorscale: "Viridis",
+      }], {
+        title: "Aero Map (CL total, no DRS)",
+        xaxis: { title: "hRideF [mm]", automargin: true },
+        yaxis: { title: "hRideR [mm]", automargin: true },
+        margin: { t: 45, r: 20, b: 58, l: 62 },
+      }, { responsive: true });
+
+      const hmDrs = setupBuildHeatmapMatrix(mapDrs, "hRideF", "hRideR", "cl_total");
+      Plotly.newPlot("setup_aero_map_drs_plot", [{
+        type: "heatmap",
+        x: hmDrs.xVals.map((v) => v * 1000.0),
+        y: hmDrs.yVals.map((v) => v * 1000.0),
+        z: hmDrs.zMat,
+        colorscale: "Portland",
+      }], {
+        title: "Aero Map (CL total, DRS)",
+        xaxis: { title: "hRideF [mm]", automargin: true },
+        yaxis: { title: "hRideR [mm]", automargin: true },
+        margin: { t: 45, r: 20, b: 58, l: 62 },
+      }, { responsive: true });
+
+      Plotly.newPlot("setup_tyre_fy_plot", [
+        { x: fyFront.map((r) => Number(r.slip_angle_deg)), y: fyFront.map((r) => Number(r.fy_n)), mode: "lines+markers", name: `Front (Fz ${fmt(tyreFront.fz_nominal_n, 0)} N)` },
+        { x: fyRear.map((r) => Number(r.slip_angle_deg)), y: fyRear.map((r) => Number(r.fy_n)), mode: "lines+markers", name: `Rear (Fz ${fmt(tyreRear.fz_nominal_n, 0)} N)` },
+      ], {
+        title: "Tyre Model Fy vs Slip Angle",
+        xaxis: { title: "Slip angle [deg]", automargin: true },
+        yaxis: { title: "Fy [N]", automargin: true },
+        legend: { orientation: "h", y: -0.2, x: 0 },
+        margin: { t: 45, r: 20, b: 62, l: 62 },
+      }, { responsive: true });
+
+      Plotly.newPlot("setup_tyre_fx_plot", [
+        { x: fxFront.map((r) => Number(r.slip_ratio)), y: fxFront.map((r) => Number(r.fx_n)), mode: "lines+markers", name: `Front (Fz ${fmt(tyreFront.fz_nominal_n, 0)} N)` },
+        { x: fxRear.map((r) => Number(r.slip_ratio)), y: fxRear.map((r) => Number(r.fx_n)), mode: "lines+markers", name: `Rear (Fz ${fmt(tyreRear.fz_nominal_n, 0)} N)` },
+      ], {
+        title: "Tyre Model Fx vs Slip Ratio",
+        xaxis: { title: "Slip ratio [-]", automargin: true },
+        yaxis: { title: "Fx [N]", automargin: true },
+        legend: { orientation: "h", y: -0.2, x: 0 },
+        margin: { t: 45, r: 20, b: 62, l: 62 },
+      }, { responsive: true });
+    }
+
+    async function openSetupViewer() {
+      $("setup_modal").classList.add("open");
+      $("setup_modal").setAttribute("aria-hidden", "false");
+      $("setup_view_status").textContent = "Preparing setup data...";
+      try {
+        const res = await fetch("/api/setup_overview");
+        const json = await res.json();
+        if (json.status !== "success") {
+          $("setup_view_status").textContent = "Error: " + (json.message || "unknown");
+          return;
+        }
+        SetupViewStore.data = json.data || {};
+        setupRenderFieldTable(SetupViewStore.data.fields || []);
+        setupRenderPlots(SetupViewStore.data || {});
+        $("setup_view_status").textContent = "Setup data loaded.";
+      } catch (err) {
+        $("setup_view_status").textContent = "Could not load setup data.";
+      }
+    }
+
+    function buildCompareCsvText() {
+      const c = CompareStore.lastComparison;
+      if (!c) return "";
+      const rowsA = cmpRowsForPlot(c.aData);
+      const rowsB = cmpRowsForPlot(c.bData);
+      const n = Math.max(rowsA.length, rowsB.length);
+      const header = [
+        "index",
+        "setup_a_name","setup_b_name",
+        "x_a","x_b",
+        "total_aero_a_n","total_aero_b_n",
+        "fz_front_axle_a_n","fz_front_axle_b_n",
+        "fz_rear_axle_a_n","fz_rear_axle_b_n",
+        "fy_total_a_n","fy_total_b_n",
+        "fx_total_a_n","fx_total_b_n"
+      ];
+      const lines = [header.join(",")];
+      for (let i = 0; i < n; i += 1) {
+        const a = rowsA[i] || {};
+        const b = rowsB[i] || {};
+        const vals = [
+          i + 1,
+          `"${String(c.aName).replace(/"/g, '""')}"`,
+          `"${String(c.bName).replace(/"/g, '""')}"`,
+          dynToAxisValue(a) ?? "",
+          dynToAxisValue(b) ?? "",
+          a.total_aero_load_n ?? "",
+          b.total_aero_load_n ?? "",
+          (Number(a.fz_total_fl_n || 0) + Number(a.fz_total_fr_n || 0)) || "",
+          (Number(b.fz_total_fl_n || 0) + Number(b.fz_total_fr_n || 0)) || "",
+          (Number(a.fz_total_rl_n || 0) + Number(a.fz_total_rr_n || 0)) || "",
+          (Number(b.fz_total_rl_n || 0) + Number(b.fz_total_rr_n || 0)) || "",
+          a.fy_total_n ?? "",
+          b.fy_total_n ?? "",
+          a.fx_total_n ?? "",
+          b.fx_total_n ?? ""
+        ];
+        lines.push(vals.join(","));
+      }
+      return lines.join("\n");
+    }
+
+    function downloadTextFile(filename, text, mimeType = "text/plain;charset=utf-8") {
+      const blob = new Blob([text], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function dynToAxisValue(row) {
+      if (row.sweep_value_rear === null || row.sweep_value_rear === undefined || row.sweep_value_rear === "") {
+        return row.sweep_value_front;
+      }
+      return `${row.sweep_value_front}/${row.sweep_value_rear}`;
+    }
+
+    function dynRenderPlots(rows, speedMode) {
+      if (!window.Plotly || !rows?.length) return;
+      const sweepName = rows[0]?.sweep_variable || "sweep";
+      if (speedMode === "single") {
+        const x = rows.map(dynToAxisValue);
+        const t1 = { x, y: rows.map(r => r.front_aero_load_n), mode: "lines+markers", name: "Front aero load [N]" };
+        const t2 = { x, y: rows.map(r => r.rear_aero_load_n), mode: "lines+markers", name: "Rear aero load [N]" };
+        const t3 = { x, y: rows.map(r => r.total_aero_load_n), mode: "lines+markers", name: "Total aero load [N]" };
+        const t4 = { x, y: rows.map(r => r.drag_force_n), mode: "lines+markers", name: "Total drag [N]", xaxis: "x2", yaxis: "y2", line: { dash: "dot" } };
+        Plotly.newPlot("dyn-plot-main", [t1, t2, t3, t4], {
+          title: "Dynamic Simulation Aero Loads",
+          grid: { rows: 2, columns: 1, pattern: "independent", roworder: "top to bottom" },
+          xaxis: { title: "", automargin: true },
+          yaxis: { title: { text: "Aero load [N]", standoff: 18 }, automargin: true },
+          xaxis2: { title: sweepName, automargin: true },
+          yaxis2: { title: { text: "Total drag [N]", standoff: 22 }, automargin: true },
+          legend: { orientation: "h", y: -0.16, x: 0.01 }, margin: { t: 52, r: 26, b: 72, l: 126 }, height: 560
+        }, { responsive: true });
+
+        const refRow = rows.reduce((best, r) => {
+          const bestMetric = Math.abs(Number(best.sweep_value_front || 0)) + Math.abs(Number(best.sweep_value_rear || 0));
+          const rowMetric = Math.abs(Number(r.sweep_value_front || 0)) + Math.abs(Number(r.sweep_value_rear || 0));
+          return rowMetric < bestMetric ? r : best;
+        }, rows[0]);
+        Plotly.newPlot("dyn-plot-balance", [
+          { x, y: rows.map(r => r.front_aero_load_n - refRow.front_aero_load_n), mode: "lines+markers", name: "Front load change [N]" },
+          { x, y: rows.map(r => r.rear_aero_load_n - refRow.rear_aero_load_n), mode: "lines+markers", name: "Rear load change [N]" },
+          { x, y: rows.map(r => r.total_aero_load_n - refRow.total_aero_load_n), mode: "lines+markers", name: "Total load change [N]" },
+          { x, y: rows.map(r => r.drag_force_n - refRow.drag_force_n), mode: "lines+markers", name: "Drag change [N]" },
+          { x, y: rows.map(r => r.aero_balance_front_pct), mode: "lines+markers", name: "Front aero balance [%]", xaxis: "x2", yaxis: "y2" }
+        ], {
+          title: "Aero Changes vs Reference / Balance",
+          grid: { rows: 2, columns: 1, pattern: "independent", roworder: "top to bottom" },
+          xaxis: { title: "", automargin: true },
+          yaxis: { title: { text: "Delta Force [N]", standoff: 18 }, automargin: true },
+          xaxis2: { title: sweepName, automargin: true },
+          yaxis2: { title: { text: "Balance [%]", standoff: 22 }, automargin: true },
+          legend: { orientation: "h", y: -0.18, x: 0.01 }, margin: { t: 62, r: 26, b: 58, l: 126 }, height: 540
+        }, { responsive: true });
+        return;
+      }
+
+      const speedVals = [...new Set(rows.map(r => Number(r.speed_kph)))].sort((a, b) => a - b);
+      const sweepVals = [...new Set(rows.map(r => Number(r.sweep_value_front)))].sort((a, b) => a - b);
+      const key2 = (a, b) => `${Number(a).toFixed(6)}|${Number(b).toFixed(6)}`;
+      const pointMap = new Map();
+      rows.forEach(r => pointMap.set(key2(r.speed_kph, r.sweep_value_front), r));
+      const zTotal = speedVals.map(s => sweepVals.map(sw => pointMap.get(key2(s, sw))?.total_aero_load_n ?? null));
+      const zBal = speedVals.map(s => sweepVals.map(sw => pointMap.get(key2(s, sw))?.aero_balance_front_pct ?? null));
+
+      Plotly.newPlot("dyn-plot-main", [{ type: "surface", x: sweepVals, y: speedVals, z: zTotal, name: "Total aero load [N]", colorscale: "Viridis" }], {
+        title: "Dynamic Simulation 3D (Total Aero Load)",
+        scene: { xaxis: { title: sweepName }, yaxis: { title: "Speed [kph]" }, zaxis: { title: "Force [N]" } },
+        margin: { t: 40, r: 10, b: 10, l: 10 }
+      }, { responsive: true });
+
+      Plotly.newPlot("dyn-plot-balance", [{ type: "surface", x: sweepVals, y: speedVals, z: zBal, name: "Front aero balance [%]", colorscale: "Cividis" }], {
+        title: "Aero Balance Front 3D",
+        scene: { xaxis: { title: sweepName }, yaxis: { title: "Speed [kph]" }, zaxis: { title: "Front balance [%]" } },
+        margin: { t: 40, r: 10, b: 10, l: 10 }
+      }, { responsive: true });
+    }
+
+    function dynRenderWheelLoadPlots(rows, labelSuffix = "") {
+      if (!window.Plotly || !rows?.length) return;
+      const x = rows.map(dynToAxisValue);
+      Plotly.newPlot("dyn-plot-fz-mech", [
+        { x, y: rows.map(r => r.fz_mechanical_fl_n), mode: "lines+markers", name: "FL mech Fz [N]" },
+        { x, y: rows.map(r => r.fz_mechanical_fr_n), mode: "lines+markers", name: "FR mech Fz [N]" },
+        { x, y: rows.map(r => r.fz_mechanical_rl_n), mode: "lines+markers", name: "RL mech Fz [N]" },
+        { x, y: rows.map(r => r.fz_mechanical_rr_n), mode: "lines+markers", name: "RR mech Fz [N]" }
+      ], {
+        title: `Mechanical Fz per Wheel${labelSuffix}`,
+        xaxis: { title: { text: rows[0]?.sweep_variable || "sweep", standoff: 14 }, automargin: true },
+        yaxis: { title: { text: "Fz [N]", standoff: 12 }, automargin: true },
+        legend: { orientation: "h", y: -0.22, x: 0.0, xanchor: "left", yanchor: "top" },
+        margin: { t: 56, r: 26, b: 110, l: 96 }
+      }, { responsive: true });
+
+      Plotly.newPlot("dyn-plot-fz-total", [
+        { x, y: rows.map(r => r.fz_total_fl_n), mode: "lines+markers", name: "FL total Fz [N]" },
+        { x, y: rows.map(r => r.fz_total_fr_n), mode: "lines+markers", name: "FR total Fz [N]" },
+        { x, y: rows.map(r => r.fz_total_rl_n), mode: "lines+markers", name: "RL total Fz [N]" },
+        { x, y: rows.map(r => r.fz_total_rr_n), mode: "lines+markers", name: "RR total Fz [N]" }
+      ], {
+        title: `Total Fz per Wheel (Mechanical + Aero)${labelSuffix}`,
+        xaxis: { title: { text: rows[0]?.sweep_variable || "sweep", standoff: 14 }, automargin: true },
+        yaxis: { title: { text: "Fz [N]", standoff: 12 }, automargin: true },
+        legend: { orientation: "h", y: -0.22, x: 0.0, xanchor: "left", yanchor: "top" },
+        margin: { t: 56, r: 26, b: 110, l: 96 }
+      }, { responsive: true });
+    }
+
+    function dynRenderTyreFyPlot(rows, labelSuffix = "") {
+      if (!window.Plotly || !rows?.length) return;
+      const x = rows.map(dynToAxisValue);
+      const wheels = [
+        { key: "fl", id: "dyn-plot-fy-fl", title: "Tyre Fy - Front Left", color: "#00b5ff" },
+        { key: "fr", id: "dyn-plot-fy-fr", title: "Tyre Fy - Front Right", color: "#ff9800" },
+        { key: "rl", id: "dyn-plot-fy-rl", title: "Tyre Fy - Rear Left", color: "#00c853" },
+        { key: "rr", id: "dyn-plot-fy-rr", title: "Tyre Fy - Rear Right", color: "#ff5252" }
+      ];
+      wheels.forEach(w => {
+        Plotly.newPlot(w.id, [{
+          x, y: rows.map(r => r[`fy_${w.key}_n`]), mode: "lines+markers", name: `Fy ${w.key.toUpperCase()} [N]`,
+          line: { color: w.color, width: 2 }, marker: { size: 5, color: w.color }
+        }], {
+          title: `${w.title}${labelSuffix}`,
+          showlegend: false,
+          xaxis: { title: rows[0]?.sweep_variable || "sweep", automargin: true },
+          yaxis: { title: { text: "Fy [N]", standoff: 12 }, automargin: true },
+          margin: { t: 40, r: 26, b: 55, l: 96 }
+        }, { responsive: true });
+      });
+    }
+
+    function dynRenderTyreFxPlot(rows, labelSuffix = "") {
+      if (!window.Plotly || !rows?.length) return;
+      const x = rows.map(dynToAxisValue);
+      const wheels = [
+        { key: "fl", id: "dyn-plot-fx-fl", title: "Tyre Fx - Front Left", color: "#00b5ff" },
+        { key: "fr", id: "dyn-plot-fx-fr", title: "Tyre Fx - Front Right", color: "#ff9800" },
+        { key: "rl", id: "dyn-plot-fx-rl", title: "Tyre Fx - Rear Left", color: "#00c853" },
+        { key: "rr", id: "dyn-plot-fx-rr", title: "Tyre Fx - Rear Right", color: "#ff5252" }
+      ];
+      wheels.forEach(w => {
+        Plotly.newPlot(w.id, [{
+          x, y: rows.map(r => r[`fx_${w.key}_n`]), mode: "lines+markers", name: `Fx ${w.key.toUpperCase()} [N]`,
+          line: { color: w.color, width: 2 }, marker: { size: 5, color: w.color }
+        }], {
+          title: `${w.title}${labelSuffix}`,
+          showlegend: false,
+          xaxis: { title: rows[0]?.sweep_variable || "sweep", automargin: true },
+          yaxis: { title: { text: "Fx [N]", standoff: 12 }, automargin: true },
+          margin: { t: 40, r: 26, b: 55, l: 96 }
+        }, { responsive: true });
+      });
+    }
+
+    function dynSetupWheelSpeedSelector() {
+      const wrap = $("dyn-wheel-speed-wrap");
+      const sel = $("dyn-wheel-speed-select");
+      if (DynStore.speedMode !== "range") {
+        wrap.style.display = "none";
+        dynRenderWheelLoadPlots(DynStore.rows);
+        dynRenderTyreFyPlot(DynStore.rows);
+        dynRenderTyreFxPlot(DynStore.rows);
+        return;
+      }
+      wrap.style.display = "";
+      const values = (DynStore.speedValues || []).slice().sort((a, b) => a - b);
+      sel.innerHTML = values.map(v => `<option value="${v}">${v} kph</option>`).join("");
+      if (!values.length) return;
+      const render = () => {
+        const speed = Number(sel.value);
+        const rowsAt = DynStore.rows.filter(r => Math.abs(Number(r.speed_kph) - speed) < 1e-9);
+        dynRenderWheelLoadPlots(rowsAt, ` @ ${speed} kph`);
+        dynRenderTyreFyPlot(rowsAt, ` @ ${speed} kph`);
+        dynRenderTyreFxPlot(rowsAt, ` @ ${speed} kph`);
+      };
+      sel.onchange = render;
+      sel.value = String(values[0]);
+      render();
+    }
+
+    function renderRows(rows) {
+      const body = $("tbody");
+      body.innerHTML = "";
+      rows.slice(0, 500).forEach((r) => {
+        const tr = document.createElement("tr");
+        const cols = [
+          fmt(r.speed_kph, 1), fmt(r.sweep_value_front, 2), fmt(r.hf_mm, 2), fmt(r.rf_deg, 2),
+          fmt(r.hr_mm, 2), fmt(r.rr_deg, 2), fmt(r.fz_total_fl_n, 0), fmt(r.fz_total_fr_n, 0),
+          fmt(r.fz_total_rl_n, 0), fmt(r.fz_total_rr_n, 0), fmt(r.fy_fl_n, 0), fmt(r.fy_fr_n, 0),
+          fmt(r.fy_rl_n, 0), fmt(r.fy_rr_n, 0), fmt(r.fy_total_n, 0),
+        ];
+        cols.forEach((c) => { const td = document.createElement("td"); td.textContent = c; tr.appendChild(td); });
+        body.appendChild(tr);
+      });
+    }
+
+    // â”€â”€ Sensitivity Analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    function sensBuildPayload() {
+      const saF = Number($("sens_sa_f").value || 4);
+      const saR = Number($("sens_sa_r").value || 4);
+      return {
+        json_data: SensStore.jsonData || undefined,
+        speed_kph: Number($("sens_speed_kph").value || 140),
+        air_density: Number($("sens_air_density").value || 1.225),
+        ax: Number($("sens_ax").value || 0),
+        ay: Number($("sens_ay").value || 0),
+        acc_units: "g",
+        hf: Number($("sens_hf").value || 0),
+        rf: Number($("sens_rf").value || 0),
+        hr: Number($("sens_hr").value || 0),
+        rr: Number($("sens_rr").value || 0),
+        drs_on: $("sens_drs_on").value === "true",
+        slip_angle_fl_deg: saF, slip_angle_fr_deg: saF,
+        slip_angle_rl_deg: saR, slip_angle_rr_deg: saR,
+        slip_ratio_fl: 0, slip_ratio_fr: 0, slip_ratio_rl: 0, slip_ratio_rr: 0,
+        delta_front_heave: Number($("sens_delta_front_heave").value || 1),
+        delta_rear_heave: Number($("sens_delta_rear_heave").value || 1),
+        delta_front_roll: Number($("sens_delta_front_roll").value || 0.1),
+        delta_rear_roll: Number($("sens_delta_rear_roll").value || 0.1),
+        delta_speed: Number($("sens_delta_speed").value || 1),
+        delta_ay: Number($("sens_delta_ay").value || 0.1),
+        delta_ax: Number($("sens_delta_ax").value || 0.1),
+      };
+    }
+
+    function sensRenderTable(data) {
+      const rows = data.rows || [];
+      const outputKeys = data.output_keys || [];
+      const outputLabels = data.output_labels || {};
+      const baseline = data.baseline || {};
+
+      // Unit suffixes per output key
+      const unitSuffix = {
+        fy_fl_n: "N", fy_fr_n: "N", fy_rl_n: "N", fy_rr_n: "N",
+        fz_mechanical_fl_n: "N", fz_mechanical_fr_n: "N", fz_mechanical_rl_n: "N", fz_mechanical_rr_n: "N",
+        fz_aero_fl_n: "N", fz_aero_fr_n: "N", fz_aero_rl_n: "N", fz_aero_rr_n: "N",
+        fz_total_fl_n: "N", fz_total_fr_n: "N", fz_total_rl_n: "N", fz_total_rr_n: "N",
+        total_aero_load_n: "N", aero_balance_front_pct: "%", drag_force_n: "N",
+      };
+
+      let html = `<table class="sens-table" style="width:100%;border-collapse:collapse;font-size:11.5px;background:#f7f9fc;">`;
+      html += `<thead><tr style="background:#e6ecf4;">
+        <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #c8d4e4;">Parameter (&Delta;)</th>`;
+      outputKeys.forEach(k => {
+        const label = outputLabels[k] || k;
+        const u = unitSuffix[k] || "";
+        html += `<th style="padding:6px 8px;text-align:right;border-bottom:1px solid #c8d4e4;">${label} &Delta;${u}</th>`;
+        html += `<th style="padding:6px 8px;text-align:right;border-bottom:1px solid #c8d4e4;">${label} ${u}/unit</th>`;
+      });
+      html += `</tr></thead><tbody>`;
+
+      // Baseline row
+      html += `<tr style="background:#eef3fa;">
+        <td style="padding:5px 8px;font-weight:600;color:#1d5fa5;">Baseline</td>`;
+      outputKeys.forEach(k => {
+        const v = baseline[k];
+        const disp = v != null ? Number(v).toFixed(2) : "-";
+        html += `<td style="padding:5px 8px;text-align:right;font-weight:600;" colspan="2">${disp}</td>`;
+      });
+      html += `</tr>`;
+
+      rows.forEach((row, i) => {
+        const bg = i % 2 === 0 ? "#fff" : "#f4f7fb";
+        html += `<tr style="background:${bg};">
+          <td style="padding:5px 8px;">${row.parameter} <span style="color:#6a7d92;font-size:10.5px;">+${row.delta}${row.unit}</span></td>`;
+        outputKeys.forEach(k => {
+          const sens = row[`sens_${k}`];
+          const absDelta = (sens != null) ? sens * row.delta : null;
+          const col = absDelta == null ? "#999" : absDelta > 0 ? "#1a6f2f" : absDelta < 0 ? "#b5190c" : "#555";
+          html += `<td style="padding:5px 8px;text-align:right;color:${col};font-weight:600;">${absDelta != null ? (absDelta >= 0 ? "+" : "") + Number(absDelta).toFixed(2) : "-"}</td>`;
+          html += `<td style="padding:5px 8px;text-align:right;color:#555;">${sens != null ? Number(sens).toFixed(3) : "-"}</td>`;
+        });
+        html += `</tr>`;
+      });
+      html += `</tbody></table>`;
+      $("sens_table_wrap").innerHTML = html;
+    }
+
+    // Tornado chart â€” bars show ABSOLUTE DELTA for the specified perturbation (sens * delta),
+    // so all parameters are comparable on the same axis regardless of their input units.
+    function sensTornadoChart(containerId, title, rows, outputKey, yUnit) {
+      const labels = rows.map((r) => {
+        const p = String(r.parameter || "").replace(" (compression +)", "");
+        return `${p}  +${r.delta}${r.unit}`;
+      });
+      // Absolute delta = how much the output changes for the specified perturbation
+      const values = rows.map(r => {
+        const s = r[`sens_${outputKey}`];
+        return s != null ? s * r.delta : 0;
+      });
+      const el = typeof containerId === "string" ? document.getElementById(containerId) : containerId;
+      const containerWidth = Math.max(0, Number(el?.clientWidth || 0));
+      const compact = containerWidth > 0 && containerWidth < 720;
+      const maxAbs = Math.max(1e-9, ...values.map((v) => Math.abs(Number(v) || 0)));
+      const xPad = maxAbs * 0.12;
+      const colors = values.map(v => v >= 0 ? "rgba(29,95,165,0.82)" : "rgba(181,25,12,0.82)");
+      const layout = {
+        title: { text: title, font: { size: 13, color: "#1f2d3d" } },
+        margin: compact
+          ? { l: 136, r: 24, t: 40, b: 56 }
+          : { l: 176, r: 34, t: 44, b: 60 },
+        font: { family: "Inter,sans-serif", size: 11, color: "#1f2d3d" },
+        xaxis: {
+          title: { text: `Delta ${yUnit} per perturbation`, standoff: 10 },
+          zeroline: true, zerolinecolor: "#c0c8d4", zerolinewidth: 2, gridcolor: "#e2e8f0",
+          automargin: true,
+          range: [-(maxAbs + xPad), maxAbs + xPad],
+        },
+        yaxis: { tickfont: { size: compact ? 10 : 11 }, automargin: true, ticklabelposition: "outside", ticklabelstandoff: 8 },
+        bargap: 0.25,
+        height: compact ? 320 : 340,
+      };
+      Plotly.react(containerId, [{
+        type: "bar", orientation: "h",
+        x: values, y: labels,
+        marker: { color: colors },
+        hovertemplate: `%{y}<br>Delta = %{x:.3f} ${yUnit}<extra></extra>`,
+      }], layout, { responsive: true, displaylogo: false });
+    }
+
+    function sensRenderCharts(data) {
+      const rows = data.rows || [];
+      if (!rows.length) return;
+      sensTornadoChart("sens-plot-fy-fl",       "Fy FL - effect per perturbation",          rows, "fy_fl_n",               "N");
+      sensTornadoChart("sens-plot-fy-fr",       "Fy FR - effect per perturbation",          rows, "fy_fr_n",               "N");
+      sensTornadoChart("sens-plot-fy-rl",       "Fy RL - effect per perturbation",          rows, "fy_rl_n",               "N");
+      sensTornadoChart("sens-plot-fy-rr",       "Fy RR - effect per perturbation",          rows, "fy_rr_n",               "N");
+      sensTornadoChart("sens-plot-fz-mech-fl",  "Fz Mechanical FL - effect per perturbation", rows, "fz_mechanical_fl_n",   "N");
+      sensTornadoChart("sens-plot-fz-mech-fr",  "Fz Mechanical FR - effect per perturbation", rows, "fz_mechanical_fr_n",   "N");
+      sensTornadoChart("sens-plot-fz-mech-rl",  "Fz Mechanical RL - effect per perturbation", rows, "fz_mechanical_rl_n",   "N");
+      sensTornadoChart("sens-plot-fz-mech-rr",  "Fz Mechanical RR - effect per perturbation", rows, "fz_mechanical_rr_n",   "N");
+      sensTornadoChart("sens-plot-fz-aero-fl",  "Fz Aero FL - effect per perturbation",      rows, "fz_aero_fl_n",         "N");
+      sensTornadoChart("sens-plot-fz-aero-fr",  "Fz Aero FR - effect per perturbation",      rows, "fz_aero_fr_n",         "N");
+      sensTornadoChart("sens-plot-fz-aero-rl",  "Fz Aero RL - effect per perturbation",      rows, "fz_aero_rl_n",         "N");
+      sensTornadoChart("sens-plot-fz-aero-rr",  "Fz Aero RR - effect per perturbation",      rows, "fz_aero_rr_n",         "N");
+      sensTornadoChart("sens-plot-fz-total-fl", "Fz Total FL - effect per perturbation",     rows, "fz_total_fl_n",        "N");
+      sensTornadoChart("sens-plot-fz-total-fr", "Fz Total FR - effect per perturbation",     rows, "fz_total_fr_n",        "N");
+      sensTornadoChart("sens-plot-fz-total-rl", "Fz Total RL - effect per perturbation",     rows, "fz_total_rl_n",        "N");
+      sensTornadoChart("sens-plot-fz-total-rr", "Fz Total RR - effect per perturbation",     rows, "fz_total_rr_n",        "N");
+      sensTornadoChart("sens-plot-aero-total",  "Total Aero Load - effect per perturbation",rows, "total_aero_load_n",     "N");
+      sensTornadoChart("sens-plot-aero-balance","Aero Balance F - effect per perturbation", rows, "aero_balance_front_pct","%");
+      sensTornadoChart("sens-plot-drag",        "Drag - effect per perturbation",           rows, "drag_force_n",          "N");
+    }
+
+    const OPT_OBJECTIVES = [
+      "total_aero_load_n","front_aero_load_n","rear_aero_load_n","aero_balance_front_pct","drag_force_n",
+      "front_total_load_n","rear_total_load_n","total_load_fl_n","total_load_fr_n","total_load_rl_n","total_load_rr_n",
+      "front_axle_lateral_force_n","rear_axle_lateral_force_n","total_lateral_force_n",
+      "front_axle_longitudinal_force_n","rear_axle_longitudinal_force_n","total_longitudinal_force_n"
+    ];
+    const OPT_CONSTRAINTS = [
+      "aero_balance_front_pct","hRideF","hRideR","total_load_fl_n","total_load_fr_n","total_load_rl_n","total_load_rr_n",
+      "front_total_load_n","rear_total_load_n","drag_force_n","total_aero_load_n"
+    ];
+
+    function optPopulateObjectiveSelect() {
+      const html = OPT_OBJECTIVES.map((k) => `<option value="${k}">${k}</option>`).join("");
+      $("opt_objective_name").innerHTML = html;
+      $("opt_objective_name").value = "total_aero_load_n";
+    }
+
+    function optToggleTarget() {
+      $("opt_objective_target_wrap").style.display = $("opt_objective_mode").value === "target" ? "" : "none";
+    }
+
+    function optConstraintRowTemplate() {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.style.marginBottom = "8px";
+      row.innerHTML = `
+        <div>
+          <label>Constraint variable</label>
+          <select class="opt-c-name">${OPT_CONSTRAINTS.map((k) => `<option value="${k}">${k}</option>`).join("")}</select>
+        </div>
+        <div>
+          <label>Kind</label>
+          <select class="opt-c-kind">
+            <option value="eq">equals</option>
+            <option value="ge">>=</option>
+            <option value="le"><=</option>
+          </select>
+        </div>
+        <div>
+          <label>Target</label>
+          <input class="opt-c-target" type="number" step="0.01" value="0">
+        </div>
+        <div>
+          <label>Weight</label>
+          <input class="opt-c-weight" type="number" step="0.1" value="1">
+        </div>
+        <div style="display:flex;align-items:flex-end;">
+          <button class="secondary opt-c-remove" type="button">Remove</button>
+        </div>
+      `;
+      row.querySelector(".opt-c-remove").addEventListener("click", () => row.remove());
+      return row;
+    }
+
+    function optAddConstraintRow(defaults = null) {
+      const row = optConstraintRowTemplate();
+      if (defaults) {
+        row.querySelector(".opt-c-name").value = String(defaults.name || "aero_balance_front_pct");
+        row.querySelector(".opt-c-kind").value = String(defaults.kind || "eq");
+        row.querySelector(".opt-c-target").value = String(defaults.target ?? 0);
+        row.querySelector(".opt-c-weight").value = String(defaults.weight ?? 1);
+      }
+      $("opt_constraints_wrap").appendChild(row);
+    }
+
+    function optCollectConstraints() {
+      const rows = Array.from($("opt_constraints_wrap").children || []);
+      return rows.map((row) => ({
+        name: row.querySelector(".opt-c-name")?.value || "aero_balance_front_pct",
+        kind: row.querySelector(".opt-c-kind")?.value || "eq",
+        target: Number(row.querySelector(".opt-c-target")?.value || 0),
+        weight: Number(row.querySelector(".opt-c-weight")?.value || 1),
+      }));
+    }
+
+    function optBuildPayload() {
+      return {
+        json_data: OptStore.jsonData || undefined,
+        objective: {
+          mode: $("opt_objective_mode").value,
+          name: $("opt_objective_name").value,
+          target: $("opt_objective_mode").value === "target" ? Number($("opt_objective_target").value || 0) : null,
+        },
+        variables: [
+          {
+            name: "front_heave",
+            enabled: $("opt_var_front_heave_enabled").checked,
+            min_value: Number($("opt_var_front_heave_min").value || 0),
+            max_value: Number($("opt_var_front_heave_max").value || 0),
+            initial_guess: Number($("opt_var_front_heave_init").value || 0),
+          },
+          {
+            name: "rear_heave",
+            enabled: $("opt_var_rear_heave_enabled").checked,
+            min_value: Number($("opt_var_rear_heave_min").value || 0),
+            max_value: Number($("opt_var_rear_heave_max").value || 0),
+            initial_guess: Number($("opt_var_rear_heave_init").value || 0),
+          },
+          {
+            name: "front_roll",
+            enabled: $("opt_var_front_roll_enabled").checked,
+            min_value: Number($("opt_var_front_roll_min").value || 0),
+            max_value: Number($("opt_var_front_roll_max").value || 0),
+            initial_guess: Number($("opt_var_front_roll_init").value || 0),
+          },
+          {
+            name: "rear_roll",
+            enabled: $("opt_var_rear_roll_enabled").checked,
+            min_value: Number($("opt_var_rear_roll_min").value || 0),
+            max_value: Number($("opt_var_rear_roll_max").value || 0),
+            initial_guess: Number($("opt_var_rear_roll_init").value || 0),
+          },
+        ],
+        constraints: optCollectConstraints(),
+        speed_kph: Number($("opt_speed_kph").value || 180),
+        air_density: Number($("opt_air_density").value || 1.225),
+        drs_on: $("opt_drs_on").value === "true",
+        acc_units: $("opt_acc_units").value,
+        ax: Number($("opt_ax").value || 0),
+        ay: Number($("opt_ay").value || 0),
+        slip_angle_fl_deg: Number($("opt_sa_fl").value || 0),
+        slip_angle_fr_deg: Number($("opt_sa_fr").value || 0),
+        slip_angle_rl_deg: Number($("opt_sa_rl").value || 0),
+        slip_angle_rr_deg: Number($("opt_sa_rr").value || 0),
+        slip_ratio_fl: Number($("opt_sr_fl").value || 0),
+        slip_ratio_fr: Number($("opt_sr_fr").value || 0),
+        slip_ratio_rl: Number($("opt_sr_rl").value || 0),
+        slip_ratio_rr: Number($("opt_sr_rr").value || 0),
+        search_settings: {
+          method: $("opt_search_method").value,
+          max_global_points: Number($("opt_max_global_points").value || 180),
+          n_best_candidates: Number($("opt_n_best_candidates").value || 5),
+        },
+      };
+    }
+
+    function optRenderSummary(data) {
+      const best = data?.best_candidate || null;
+      if (!best) {
+        $("opt_best_summary").textContent = "No best candidate available.";
+        $("opt_best_outputs").textContent = "No outputs available.";
+        $("opt_diag").textContent = "No diagnostics available.";
+        $("opt_top_table_wrap").innerHTML = "";
+        return;
+      }
+      const dv = best.decision_vector || {};
+      const fhMin = Number($("opt_var_front_heave_min")?.value || 0);
+      const fhMax = Number($("opt_var_front_heave_max")?.value || 0);
+      const rhMin = Number($("opt_var_rear_heave_min")?.value || 0);
+      const rhMax = Number($("opt_var_rear_heave_max")?.value || 0);
+      const outOfBounds = (
+        Number.isFinite(Number(dv.front_heave)) && (Number(dv.front_heave) < fhMin || Number(dv.front_heave) > fhMax)
+      ) || (
+        Number.isFinite(Number(dv.rear_heave)) && (Number(dv.rear_heave) < rhMin || Number(dv.rear_heave) > rhMax)
+      );
+      $("opt_best_summary").innerHTML = `
+        <div><strong>Objective:</strong> ${data?.diagnostics?.objective_name || "-"} (${data?.diagnostics?.objective_mode || "-"})</div>
+        <div><strong>Best decision (commanded):</strong> Front Heave (compression +)=${fmt(dv.front_heave,3)} mm, Rear Heave (compression +)=${fmt(dv.rear_heave,3)} mm, Front Roll=${fmt(dv.front_roll,3)} deg, Rear Roll=${fmt(dv.rear_roll,3)} deg</div>
+        <div><strong>Best objective value:</strong> ${fmt(best.objective_value_raw,4)}</div>
+        ${outOfBounds ? `<div style="color:#b5190c;"><strong>Warning:</strong> Best heave (compression + convention) appears outside configured bounds. Please rerun and share this case.</div>` : ``}
+      `;
+      const out = best.outputs || {};
+      const outputLabelMap = {
+        hRideF_mm: "Ride Height Front [mm] (derived)",
+        hRideR_mm: "Ride Height Rear [mm] (derived)",
+        cg_global_mm: "cg_global [mm]",
+        h_cg_mm: "h_cg [mm]",
+        front_aero_load_n: "front_aero_load [N]",
+        rear_aero_load_n: "rear_aero_load [N]",
+        aero_balance_front_pct: "aero_balance_front [%]",
+        drag_force_n: "drag_force [N]",
+        front_static_load_n: "front_static_load [N]",
+        rear_static_load_n: "rear_static_load [N]",
+        load_transfer_longitudinal_n: "load_transfer_longitudinal [N]",
+        lateral_transfer_front_total_n: "lateral_transfer_front_total [N]",
+        lateral_transfer_rear_total_n: "lateral_transfer_rear_total [N]",
+        total_load_fl_n: "total_load_FL [N]",
+        total_load_fr_n: "total_load_FR [N]",
+        total_load_rl_n: "total_load_RL [N]",
+        total_load_rr_n: "total_load_RR [N]",
+        front_axle_lateral_force_n: "front_axle_lateral_force [N]",
+        rear_axle_lateral_force_n: "rear_axle_lateral_force [N]",
+        front_axle_longitudinal_force_n: "front_axle_longitudinal_force [N]",
+        rear_axle_longitudinal_force_n: "rear_axle_longitudinal_force [N]",
+      };
+      const keys = [
+        "hRideF_mm","hRideR_mm","cg_global_mm","h_cg_mm","front_aero_load_n","rear_aero_load_n","aero_balance_front_pct",
+        "drag_force_n","front_static_load_n","rear_static_load_n","load_transfer_longitudinal_n","lateral_transfer_front_total_n",
+        "lateral_transfer_rear_total_n","total_load_fl_n","total_load_fr_n","total_load_rl_n","total_load_rr_n",
+        "front_axle_lateral_force_n","rear_axle_lateral_force_n","front_axle_longitudinal_force_n","rear_axle_longitudinal_force_n"
+      ];
+      const lines = keys.map((k) => {
+        const raw = out[k];
+        const label = outputLabelMap[k] || k;
+        if (Array.isArray(raw)) {
+          return `<div><strong>${label}:</strong> ${raw.map((v) => Number(v).toFixed(3)).join(", ")}</div>`;
+        }
+        if (raw === null || raw === undefined || raw === "") {
+          return `<div><strong>${label}:</strong> -</div>`;
+        }
+        const numVal = Number(raw);
+        const text = Number.isFinite(numVal) ? numVal.toFixed(3) : String(raw);
+        return `<div><strong>${label}:</strong> ${text}</div>`;
+      });
+      $("opt_best_outputs").innerHTML = lines.join("");
+      $("opt_diag").innerHTML = "";
+      $("opt_top_table_wrap").innerHTML = "";
+    }
+
+    function optRenderCharts(data) {
+      const top = Array.isArray(data?.top_candidates) ? data.top_candidates : [];
+      if (!top.length) return;
+      const idx = top.map((_, i) => i + 1);
+      Plotly.newPlot("opt-plot-cost", [
+        { x: idx, y: top.map((c) => Number(c.total_cost || 0)), mode: "lines+markers", name: "Total cost" },
+        { x: idx, y: top.map((c) => Number(c.penalty_value || 0)), mode: "lines+markers", name: "Penalty", line: { dash: "dot" } }
+      ], {
+        title: "Optimization Cost Top Candidates",
+        xaxis: { title: "Candidate rank", automargin: true },
+        yaxis: { title: "Cost", automargin: true },
+        margin: { t: 46, r: 24, b: 60, l: 84 },
+        legend: { orientation: "h", y: -0.2, x: 0 },
+      }, { responsive: true });
+
+      Plotly.newPlot("opt-plot-objective", [
+        { x: idx, y: top.map((c) => Number(c.objective_value_raw || 0)), mode: "lines+markers", name: "Raw objective" },
+        { x: idx, y: top.map((c) => Number(c.outputs?.total_aero_load_n || 0)), mode: "lines+markers", name: "Total aero load [N]" },
+        { x: idx, y: top.map((c) => Number(c.outputs?.drag_force_n || 0)), mode: "lines+markers", name: "Drag [N]" },
+      ], {
+        title: "Optimization Objective Top Candidates",
+        xaxis: { title: "Candidate rank", automargin: true },
+        yaxis: { title: "Value", automargin: true },
+        margin: { t: 46, r: 24, b: 60, l: 84 },
+        legend: { orientation: "h", y: -0.2, x: 0 },
+      }, { responsive: true });
+    }
+
+    function optSetBusy(isBusy) {
+      const overlay = $("opt_loading_overlay");
+      if (!overlay) return;
+      overlay.classList.toggle("visible", !!isBusy);
+      overlay.setAttribute("aria-hidden", isBusy ? "false" : "true");
+    }
+
+    function showView(view) {
+      $("entry-view").style.display = view === "entry" ? "" : "none";
+      $("calculator-view").style.display = view === "calculator" ? "" : "none";
+      $("compare-view").style.display = view === "compare" ? "" : "none";
+      $("compare-results-view").style.display = view === "compare-results" ? "" : "none";
+      $("sensitivity-view").style.display = view === "sensitivity" ? "" : "none";
+      $("optimization-view").style.display = view === "optimization" ? "" : "none";
+      if (view === "calculator") customRefreshBuilder("dyn");
+      if (view === "compare") customRefreshBuilder("cmp");
+      if (view === "compare-results") customRefreshBuilder("cmpres");
+      if (view === "optimization") customRefreshBuilder("opt");
+    }
+
+    function cmpHandlePoolSelect() {
+      const files = Array.from($("cmp_files").files || []);
+      CompareStore.pendingFiles = files;
+      if (!files.length) {
+        $("cmp_pool_file_status").textContent = "No files selected.";
+        $("cmp_btn_stage_pool").disabled = true;
+        $("cmp_btn_stage_pool").classList.remove("is-ready");
+        return;
+      }
+      $("cmp_pool_file_status").textContent = `${files.length} file(s) selected. Click Stage Setups.`;
+      $("cmp_btn_stage_pool").disabled = false;
+      $("cmp_btn_stage_pool").classList.add("is-ready");
+    }
+
+    async function cmpStagePool() {
+      if (!CompareStore.pendingFiles.length) {
+        $("cmp_pool_stage_status").textContent = "Please load JSON files first.";
+        return;
+      }
+      $("cmp_pool_stage_status").textContent = "Staging setups...";
+      const staged = [];
+      const usedNames = new Set(CompareStore.setups.map(s => s.name));
+      for (const file of CompareStore.pendingFiles) {
+        try {
+          const jsonData = await cmpReadJsonFile(file);
+          let safeName = String(file.name || "setup.json");
+          if (usedNames.has(safeName)) {
+            const dot = safeName.lastIndexOf(".");
+            const name = dot > 0 ? safeName.slice(0, dot) : safeName;
+            const ext = dot > 0 ? safeName.slice(dot) : "";
+            let idx = 2;
+            while (usedNames.has(`${name} (${idx})${ext}`)) idx += 1;
+            safeName = `${name} (${idx})${ext}`;
+          }
+          usedNames.add(safeName);
+          staged.push({
+            id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+            name: safeName,
+            jsonData
+          });
+        } catch (err) {
+          // Skip invalid files and continue staging the rest.
+        }
+      }
+      if (!staged.length) {
+        $("cmp_pool_stage_status").textContent = "No valid JSON files staged.";
+        return;
+      }
+      CompareStore.setups = CompareStore.setups.concat(staged);
+      cmpRefreshSetupSelectors();
+      $("cmp_pool_stage_status").textContent = `${CompareStore.setups.length} setup(s) staged in pool.`;
+      $("cmp_pool_file_status").textContent = "No files selected.";
+      $("cmp_files").value = "";
+      CompareStore.pendingFiles = [];
+      $("cmp_btn_stage_pool").disabled = true;
+      $("cmp_btn_stage_pool").classList.remove("is-ready");
+    }
+
+    $("btnStageFile").addEventListener("click", async () => {
+      const file = $("jsonFile").files[0];
+      if (!file) { $("loadStatus").textContent = "Please select a JSON file first."; return; }
+      const fd = new FormData(); fd.append("file", file);
+      $("loadStatus").textContent = "Staging file...";
+      const res = await fetch("/api/load_upload", { method: "POST", body: fd });
+      const json = await res.json();
+      hasData = json.status === "success";
+      $("loadStatus").textContent = hasData ? "JSON loaded successfully." : "Error: " + (json.message || "unknown");
+      $("btnViewSetup").disabled = !hasData;
+      $("btnViewSetup").classList.toggle("is-ready", !!hasData);
+    });
+
+    $("btnLoadCar").addEventListener("click", () => {
+      $("jsonFile").click();
+    });
+
+    $("jsonFile").addEventListener("change", () => {
+      const file = $("jsonFile").files[0];
+      $("fileName").textContent = file ? `Selected: ${file.name}` : "No file selected.";
+      $("btnStageFile").disabled = !file;
+      $("btnStageFile").classList.toggle("is-ready", !!file);
+      $("btnViewSetup").disabled = true;
+      $("btnViewSetup").classList.remove("is-ready");
+    });
+    $("btnViewSetup").addEventListener("click", openSetupViewer);
+
+    $("btnRun").addEventListener("click", async () => {
+      if (!hasData) { $("simStatus").textContent = "Please load a setup JSON first."; return; }
+      $("simStatus").textContent = "Running simulation...";
+      const res = await fetch("/api/simulate_dynamic_aero", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(dynPayload())
+      });
+      const json = await res.json();
+      if (json.status !== "success") { $("simStatus").textContent = "Error: " + (json.message || "unknown"); return; }
+      const data = json.data || {};
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      if (!rows.length) { $("simStatus").textContent = "No data returned."; return; }
+      DynStore.lastData = data;
+      DynStore.rows = rows;
+      DynStore.csv = data.csv || "";
+      DynStore.speedMode = data.speed_mode || $("speed_mode").value;
+      DynStore.speedValues = Array.isArray(data.speed_values_kph) ? data.speed_values_kph.slice() : [];
+      $("dyn_save_results").disabled = false;
+      $("dyn_export_pdf").disabled = false;
+      $("btnCsvResults").disabled = !DynStore.csv;
+      renderRows(rows);
+      dynRenderPlots(rows, DynStore.speedMode);
+      dynSetupWheelSpeedSelector();
+      customRefreshBuilder("dyn");
+      $("dyn-summary-text").textContent = `${rows.length} points | speeds: ${DynStore.speedValues.join(", ")} kph | sweep: ${data.sweep_variable || "-"}`;
+      $("simStatus").textContent = "Simulation completed.";
+    });
+
+    const downloadCsv = () => {
+      if (!DynStore.csv) return;
+      window.location.href = "/api/export_dynamic_csv";
+    };
+
+    $("dyn_save_results").addEventListener("click", () => {
+      if (!DynStore.lastData || !DynStore.rows?.length) {
+        $("simStatus").textContent = "Run a simulation first to save results.";
+        return;
+      }
+      const stamp = new Date();
+      const hh = String(stamp.getHours()).padStart(2, "0");
+      const mm = String(stamp.getMinutes()).padStart(2, "0");
+      const ss = String(stamp.getSeconds()).padStart(2, "0");
+      const speedInfo = DynStore.speedMode === "range" ? "range" : `${fmt(DynStore.speedValues?.[0] || 0, 0)}kph`;
+      const suggested = `Calculator | ${speedInfo} | ${hh}:${mm}:${ss}`;
+      const customName = (window.prompt("Result name:", suggested) || "").trim();
+      if (!customName) {
+        $("simStatus").textContent = "Save cancelled.";
+        return;
+      }
+      cmpSaveResult("Calculator", DynStore.lastData, customName);
+      $("simStatus").textContent = `Calculator results saved as "${customName}".`;
+    });
+
+    $("goCalculator").addEventListener("click", () => showView("calculator"));
+    $("goCompare").addEventListener("click", () => showView("compare"));
+    $("goCompareResults").addEventListener("click", () => showView("compare-results"));
+    $("goSensitivity").addEventListener("click", () => showView("sensitivity"));
+
+    $("opt_btnLoadCar").addEventListener("click", () => $("opt_jsonFile").click());
+    $("opt_jsonFile").addEventListener("change", () => {
+      const file = $("opt_jsonFile").files[0];
+      $("opt_fileName").textContent = file ? `Selected: ${file.name}` : "No file selected.";
+      $("opt_btnStageFile").disabled = !file;
+      $("opt_btnStageFile").classList.toggle("is-ready", !!file);
+      $("opt_loadStatus").textContent = file ? "File selected. Click Stage Car to load." : "No JSON loaded.";
+      $("opt_btnViewSetup").disabled = true;
+      $("opt_btnViewSetup").classList.remove("is-ready");
+      OptStore.jsonData = null;
+    });
+    $("opt_btnStageFile").addEventListener("click", async () => {
+      const file = $("opt_jsonFile").files[0];
+      if (!file) return;
+      $("opt_loadStatus").textContent = "Staging file...";
+      try {
+        const text = await file.text();
+        OptStore.jsonData = JSON.parse(text);
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch("/api/load_upload", { method: "POST", body: fd });
+        const json = await res.json();
+        if (json.status === "success") {
+          $("opt_loadStatus").textContent = "JSON loaded successfully.";
+          $("opt_btnViewSetup").disabled = false;
+          $("opt_btnViewSetup").classList.add("is-ready");
+        } else {
+          $("opt_loadStatus").textContent = "Error: " + (json.message || "unknown");
+          $("opt_btnViewSetup").disabled = true;
+          $("opt_btnViewSetup").classList.remove("is-ready");
+          OptStore.jsonData = null;
+        }
+        $("opt_btnStageFile").classList.remove("is-ready");
+      } catch (err) {
+        OptStore.jsonData = null;
+        $("opt_btnViewSetup").disabled = true;
+        $("opt_btnViewSetup").classList.remove("is-ready");
+        $("opt_loadStatus").textContent = "Error: could not parse JSON.";
+      }
+    });
+    $("opt_btnViewSetup").addEventListener("click", openSetupViewer);
+
+    $("opt_run_btn").addEventListener("click", async () => {
+      if (!OptStore.jsonData) {
+        $("opt_status").textContent = "Please load and stage a setup JSON in Optimization first.";
+        return;
+      }
+      $("opt_status").textContent = "Running optimization...";
+      $("opt_run_btn").disabled = true;
+      optSetBusy(true);
+      try {
+        const res = await fetch("/api/optimize_dynamic", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(optBuildPayload()),
+        });
+        const json = await res.json();
+        if (json.status !== "success") {
+          $("opt_status").textContent = "Error: " + (json.message || "unknown");
+          return;
+        }
+        const data = json.data || {};
+        OptStore.result = data;
+        OptStore.globalCandidates = Array.isArray(data.global_candidates) ? data.global_candidates : [];
+        OptStore.topCandidates = Array.isArray(data.top_candidates) ? data.top_candidates : [];
+        OptStore.hasData = true;
+        $("opt_export_pdf").disabled = false;
+        $("opt_export_csv_top").disabled = false;
+        $("opt_export_csv_global").disabled = false;
+        optRenderSummary(data);
+        $("opt_status").textContent = "Optimization completed.";
+      } catch (err) {
+        $("opt_status").textContent = "Network error: " + (err?.message || "unknown");
+      } finally {
+        optSetBusy(false);
+        $("opt_run_btn").disabled = false;
+      }
+    });
+
+    $("opt_export_csv_top").addEventListener("click", () => {
+      if (!OptStore.hasData) return;
+      window.location.href = "/api/export_optimize_csv?kind=top";
+      $("opt_status").textContent = "Top candidates CSV exported.";
+    });
+    $("opt_export_csv_global").addEventListener("click", () => {
+      if (!OptStore.hasData) return;
+      window.location.href = "/api/export_optimize_csv?kind=global";
+      $("opt_status").textContent = "Global candidates CSV exported.";
+    });
+    $("opt_export_pdf").addEventListener("click", () => {
+      openReportEditor("opt", "opt_status", "Optimization Report");
+    });
+
+    // â”€â”€ Sensitivity file load â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    $("sens_btnLoadCar").addEventListener("click", () => $("sens_jsonFile").click());
+    $("sens_jsonFile").addEventListener("change", () => {
+      const file = $("sens_jsonFile").files[0];
+      $("sens_fileName").textContent = file ? `Selected: ${file.name}` : "No file selected.";
+      $("sens_btnStageFile").disabled = !file;
+      $("sens_btnStageFile").classList.toggle("is-ready", !!file);
+      $("sens_loadStatus").textContent = file ? "File selected. Click Stage Car to load." : "No JSON loaded.";
+      $("sens_btnViewSetup").disabled = true;
+      $("sens_btnViewSetup").classList.remove("is-ready");
+      SensStore.jsonData = null;
+    });
+    $("sens_btnStageFile").addEventListener("click", async () => {
+      const file = $("sens_jsonFile").files[0];
+      if (!file) return;
+      $("sens_loadStatus").textContent = "Loading...";
+      try {
+        const text = await file.text();
+        SensStore.jsonData = JSON.parse(text);
+        // Also upload to server so View Setup works
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch("/api/load_upload", { method: "POST", body: fd });
+        const json = await res.json();
+        if (json.status === "success") {
+          $("sens_loadStatus").textContent = "JSON loaded successfully.";
+          $("sens_btnViewSetup").disabled = false;
+          $("sens_btnViewSetup").classList.add("is-ready");
+        } else {
+          $("sens_loadStatus").textContent = "Error: " + (json.message || "unknown");
+        }
+        $("sens_btnStageFile").classList.remove("is-ready");
+      } catch (e) {
+        SensStore.jsonData = null;
+        $("sens_loadStatus").textContent = "Error: could not parse JSON.";
+      }
+    });
+    $("sens_btnViewSetup").addEventListener("click", openSetupViewer);
+
+    // â”€â”€ Sensitivity run â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    $("sens_run_btn").addEventListener("click", async () => {
+      if (!SensStore.jsonData) { $("sens_status").textContent = "Please load a setup JSON first."; return; }
+      $("sens_status").textContent = "Running sensitivity analysis...";
+      $("sens_run_btn").disabled = true;
+      try {
+        const res = await fetch("/api/sensitivity", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(sensBuildPayload()),
+        });
+        const json = await res.json();
+        if (json.status !== "success") {
+          $("sens_status").textContent = "Error: " + (json.message || "unknown");
+          return;
+        }
+        const data = json.data || {};
+        SensStore.lastData = data;
+        SensStore.csv = data.csv || "";
+        SensStore.hasData = true;
+        sensRenderTable(data);
+        sensRenderCharts(data);
+        $("sens_export_pdf").disabled = false;
+        $("sens_export_csv").disabled = !SensStore.csv;
+        $("sens_status").textContent = "Sensitivity analysis completed.";
+      } catch (e) {
+        $("sens_status").textContent = "Network error: " + e.message;
+      } finally {
+        $("sens_run_btn").disabled = false;
+      }
+    });
+
+    $("sens_export_pdf").addEventListener("click", () => {
+      openReportEditor("sens", "sens_status", "Sensitivity Analysis Report");
+    });
+    $("sens_export_csv").addEventListener("click", () => {
+      if (!SensStore.csv) { $("sens_status").textContent = "Run analysis first."; return; }
+      const now = new Date();
+      const ts = [now.getFullYear(), String(now.getMonth()+1).padStart(2,"0"), String(now.getDate()).padStart(2,"0"),
+                  String(now.getHours()).padStart(2,"0"), String(now.getMinutes()).padStart(2,"0"), String(now.getSeconds()).padStart(2,"0")].join("");
+      downloadTextFile(`sensitivity_${ts}.csv`, SensStore.csv, "text/csv;charset=utf-8");
+      $("sens_status").textContent = "CSV exported.";
+    });
+
+    $("cmp_btn_load_pool").addEventListener("click", () => $("cmp_files").click());
+    $("cmp_files").addEventListener("change", cmpHandlePoolSelect);
+    $("cmp_btn_stage_pool").addEventListener("click", async () => { await cmpStagePool(); });
+    $("cmp_setup_a").addEventListener("change", () => { $("cmp-summary").textContent = ""; });
+    $("cmp_setup_b").addEventListener("change", () => { $("cmp-summary").textContent = ""; });
+    $("cmpres_result_a").addEventListener("change", () => { $("cmpres_status").textContent = "Press Compare to update charts."; });
+    $("cmpres_result_b").addEventListener("change", () => { $("cmpres_status").textContent = "Press Compare to update charts."; });
+    $("cmpres_compare_btn").addEventListener("click", cmpRenderSavedResults);
+    $("dyn_export_pdf").addEventListener("click", () => {
+      openReportEditor("dyn", "simStatus", "Calculator Report");
+    });
+    $("cmp_export_pdf").addEventListener("click", () => {
+      openReportEditor("cmp", "cmp_global_status", "Compare Setups Report");
+    });
+    $("cmp_export_csv").addEventListener("click", () => {
+      const csv = buildCompareCsvText();
+      if (!csv) {
+        $("cmp_global_status").textContent = "Run a comparison first to export CSV.";
+        return;
+      }
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, "0");
+      const dd = String(now.getDate()).padStart(2, "0");
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mi = String(now.getMinutes()).padStart(2, "0");
+      const ss = String(now.getSeconds()).padStart(2, "0");
+      downloadTextFile(`compare_setups_${yyyy}${mm}${dd}_${hh}${mi}${ss}.csv`, csv, "text/csv;charset=utf-8");
+      $("cmp_global_status").textContent = "Comparison CSV exported.";
+    });
+    $("cmpres_export_report").addEventListener("click", () => {
+      openReportEditor("cmpres", "cmpres_status", "Compare Results Report");
+    });
+
+    $("dyn_custom_mode").addEventListener("change", () => customToggleMode(CustomCfg.dyn));
+    $("dyn_custom_add").addEventListener("click", () => customAddPlot("dyn"));
+    $("dyn_custom_clear").addEventListener("click", () => customClearCharts(CustomCfg.dyn));
+
+    $("cmp_custom_mode").addEventListener("change", () => customToggleMode(CustomCfg.cmp));
+    $("cmp_custom_source").addEventListener("change", () => customRefreshBuilder("cmp"));
+    $("cmp_custom_add").addEventListener("click", () => customAddPlot("cmp"));
+    $("cmp_custom_clear").addEventListener("click", () => customClearCharts(CustomCfg.cmp));
+
+    $("cmpres_custom_mode").addEventListener("change", () => customToggleMode(CustomCfg.cmpres));
+    $("cmpres_custom_source").addEventListener("change", () => customRefreshBuilder("cmpres"));
+    $("cmpres_custom_add").addEventListener("click", () => customAddPlot("cmpres"));
+    $("cmpres_custom_clear").addEventListener("click", () => customClearCharts(CustomCfg.cmpres));
+
+    $("opt_custom_mode").addEventListener("change", () => customToggleMode(CustomCfg.opt));
+    $("opt_custom_add").addEventListener("click", () => customAddPlot("opt"));
+    $("opt_custom_clear").addEventListener("click", () => customClearCharts(CustomCfg.opt));
+    $("report_close_btn").addEventListener("click", closeReportEditor);
+    $("report_export_btn").addEventListener("click", exportReportPdf);
+    $("report_modal").addEventListener("click", (e) => {
+      if (e.target === $("report_modal")) closeReportEditor();
+    });
+    $("setup_close_btn").addEventListener("click", setupCloseViewer);
+    $("setup_modal").addEventListener("click", (e) => {
+      if (e.target === $("setup_modal")) setupCloseViewer();
+    });
+
+    $("dyn_input_preset_save").addEventListener("click", () => saveInputPresetFrom("dyn"));
+    $("dyn_input_preset_apply").addEventListener("click", (e) => { e.preventDefault(); applyInputPresetTo("dyn"); });
+    $("dyn_input_preset_delete").addEventListener("click", (e) => { e.preventDefault(); deleteInputPreset("dyn"); });
+    $("cmp_input_preset_save").addEventListener("click", () => saveInputPresetFrom("cmp"));
+    $("cmp_input_preset_apply").addEventListener("click", (e) => { e.preventDefault(); applyInputPresetTo("cmp"); });
+    $("cmp_input_preset_delete").addEventListener("click", (e) => { e.preventDefault(); deleteInputPreset("cmp"); });
+    $("opt_objective_mode").addEventListener("change", optToggleTarget);
+    $("opt_add_constraint").addEventListener("click", () => optAddConstraintRow());
+
+    $("cmp_btn_run_all").addEventListener("click", async () => {
+      const setupAId = $("cmp_setup_a").value;
+      const setupBId = $("cmp_setup_b").value;
+      if (!setupAId || !setupBId) {
+        $("cmp_global_status").textContent = "Select Setup A and Setup B first.";
+        return;
+      }
+      if (setupAId === setupBId) {
+        $("cmp_global_status").textContent = "Choose two different setups.";
+        return;
+      }
+      const setupA = cmpGetSetupById(setupAId);
+      const setupB = cmpGetSetupById(setupBId);
+      if (!setupA || !setupB) {
+        $("cmp_global_status").textContent = "Selected setups are not available in pool.";
+        return;
+      }
+      $("cmp_global_status").textContent = "Running both setups...";
+      try {
+        const [dataA, dataB] = await Promise.all([
+          cmpRunSetupData(setupA.jsonData),
+          cmpRunSetupData(setupB.jsonData)
+        ]);
+        CompareStore.lastComparison = {
+          aName: setupA.name, bName: setupB.name,
+          aData: dataA, bData: dataB
+        };
+        $("cmp_export_pdf").disabled = false;
+        $("cmp_export_csv").disabled = false;
+        cmpRender(dataA, dataB, setupA.name, setupB.name);
+        customRefreshBuilder("cmp");
+        cmpSaveResult(setupA.name, dataA);
+        cmpSaveResult(setupB.name, dataB);
+        $("cmp_global_status").textContent = "Comparison completed.";
+      } catch (err) {
+        $("cmp_global_status").textContent = "Comparison failed: " + (err?.message || "unknown");
+      }
+    });
+
+    $("btnCsvResults").addEventListener("click", downloadCsv);
+    $("homeBtn").addEventListener("click", () => { showView("entry"); });
+    $("speed_mode").addEventListener("change", dynToggleSpeedMode);
+    $("sweep_variable").addEventListener("change", dynToggleSweepMode);
+    $("cmp_speed_mode").addEventListener("change", cmpToggleSpeedMode);
+    $("cmp_sweep_variable").addEventListener("change", cmpToggleSweepMode);
+    dynToggleSpeedMode();
+    dynToggleSweepMode();
+    cmpToggleSpeedMode();
+    cmpToggleSweepMode();
+    customToggleMode(CustomCfg.dyn);
+    customToggleMode(CustomCfg.cmp);
+    customToggleMode(CustomCfg.cmpres);
+    customToggleMode(CustomCfg.opt);
+    loadInputPresets();
+    refreshInputPresetSelectors();
+    customRefreshBuilder("dyn");
+    customRefreshBuilder("cmp");
+    customRefreshBuilder("cmpres");
+    customRefreshBuilder("opt");
+    optPopulateObjectiveSelect();
+    optToggleTarget();
+    optAddConstraintRow({ name: "aero_balance_front_pct", kind: "eq", target: 44, weight: 20 });
+    showView("entry");
+  </script>
+</body>
+</html>
+
+
