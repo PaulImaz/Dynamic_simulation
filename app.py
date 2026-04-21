@@ -3,6 +3,8 @@ import json
 import math
 import os
 import tempfile
+import hashlib
+import importlib
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -22,7 +24,21 @@ from dynamic_optimization import (
 )
 from upright_solver import solve_upright_for_zw
 
+try:
+    from calibrator import calibrate as calibrate_geometry, write_calibrated_json
+    _CALIBRATOR_AVAILABLE = True
+except Exception:
+    calibrate_geometry = None  # type: ignore[assignment]
+    write_calibrated_json = None  # type: ignore[assignment]
+    _CALIBRATOR_AVAILABLE = False
+
+try:
+    from suspension_model import VEHICLE_REGISTRY
+except Exception:
+    VEHICLE_REGISTRY = {}
+
 _PIPELINE_SOURCE = "local_workspace"
+_CALIBRATION_MODEL_FALLBACK = ["F2_2026", "F4_T421", "D324_EF", "F3_2026", "default"]
 
 
 app = Flask(__name__)
@@ -33,6 +49,7 @@ _state: Dict[str, object] = {
     "last_csv": "",
     "last_opt_global_csv": "",
     "last_opt_top_csv": "",
+    "gg_calibration_cache": {},
 }
 
 
@@ -281,6 +298,18 @@ def compute_center_antis_for_state(json_data: dict, hf: float, rf: float, hr: fl
         "cg_y_mm": cg_y_mm,
         "cg_z_mm": cg_z_mm,
         "h_cg_mm": h_cg_mm,
+        "front_rc_z_mm": _num("front_rc_z", np.nan),
+        "rear_rc_z_mm": _num("rear_rc_z", np.nan),
+        "front_rc_height_mm": _num("front_rc_height", np.nan),
+        "rear_rc_height_mm": _num("rear_rc_height", np.nan),
+        "pitch_x_mm": _num("pitch_x", np.nan),
+        "pitch_z_mm": _num("pitch_z", np.nan),
+        "pitch_ic_front_x_mm": _num("pitch_ic_front_x", np.nan),
+        "pitch_ic_front_z_mm": _num("pitch_ic_front_z", np.nan),
+        "pitch_ic_rear_x_mm": _num("pitch_ic_rear_x", np.nan),
+        "pitch_ic_rear_z_mm": _num("pitch_ic_rear_z", np.nan),
+        "anti_dive_pct": _num("anti_dive_pct", np.nan),
+        "anti_squat_pct": _num("anti_squat_pct", np.nan),
     }
 
 
@@ -514,9 +543,35 @@ def _build_dynamic_aero_rows(json_data: dict, body: dict) -> Dict[str, object]:
             sprung_mass_front_kg = front_sprung_axle_n / g
             sprung_mass_rear_kg = rear_sprung_axle_n / g
 
-            longitudinal_transfer_total_n = mass_sprung_total * ax_mps2 * h_cg_m / max(wheelbase_m, 1e-9)
-            lateral_transfer_front_total_n = sprung_mass_front_kg * ay_mps2 * h_cg_m / max(front_track_m, 1e-9)
-            lateral_transfer_rear_total_n = sprung_mass_rear_kg * ay_mps2 * h_cg_m / max(rear_track_m, 1e-9)
+            front_rc_h_mm = float(analysis.get("front_rc_height_mm", np.nan))
+            rear_rc_h_mm = float(analysis.get("rear_rc_height_mm", np.nan))
+            if not np.isfinite(front_rc_h_mm):
+                front_rc_h_mm = float(analysis.get("front_rc_z_mm", np.nan))
+            if not np.isfinite(rear_rc_h_mm):
+                rear_rc_h_mm = float(analysis.get("rear_rc_z_mm", np.nan))
+
+            lam_cg = float(np.clip(longitudinal_ratio, 0.0, 1.0))
+            h_ra_cg_mm = (
+                front_rc_h_mm + lam_cg * (rear_rc_h_mm - front_rc_h_mm)
+                if (np.isfinite(front_rc_h_mm) and np.isfinite(rear_rc_h_mm))
+                else np.nan
+            )
+            h_ra_cg_m = (h_ra_cg_mm / 1000.0) if np.isfinite(h_ra_cg_mm) else 0.0
+
+            pitch_ic_f_z_mm = float(analysis.get("pitch_ic_front_z_mm", np.nan))
+            pitch_ic_r_z_mm = float(analysis.get("pitch_ic_rear_z_mm", np.nan))
+            if np.isfinite(pitch_ic_f_z_mm) and np.isfinite(pitch_ic_r_z_mm):
+                h_pc_mm = pitch_ic_f_z_mm + lam_cg * (pitch_ic_r_z_mm - pitch_ic_f_z_mm)
+            else:
+                h_pc_mm = float(analysis.get("pitch_z_mm", np.nan))
+            h_pc_m = (h_pc_mm / 1000.0) if np.isfinite(h_pc_mm) else 0.0
+
+            pitch_arm_m = h_cg_m - h_pc_m
+            roll_arm_m = h_cg_m - h_ra_cg_m
+
+            longitudinal_transfer_total_n = mass_sprung_total * ax_mps2 * pitch_arm_m / max(wheelbase_m, 1e-9)
+            lateral_transfer_front_total_n = sprung_mass_front_kg * ay_mps2 * roll_arm_m / max(front_track_m, 1e-9)
+            lateral_transfer_rear_total_n = sprung_mass_rear_kg * ay_mps2 * roll_arm_m / max(rear_track_m, 1e-9)
 
             delta_long_front_each_n = -0.5 * longitudinal_transfer_total_n
             delta_long_rear_each_n = +0.5 * longitudinal_transfer_total_n
@@ -604,6 +659,10 @@ def _build_dynamic_aero_rows(json_data: dict, body: dict) -> Dict[str, object]:
                 "load_transfer_longitudinal_n": float(longitudinal_transfer_total_n),
                 "lateral_transfer_front_total_n": float(lateral_transfer_front_total_n),
                 "lateral_transfer_rear_total_n": float(lateral_transfer_rear_total_n),
+                "h_pc_mm": float(h_pc_mm) if np.isfinite(h_pc_mm) else None,
+                "h_ra_cg_mm": float(h_ra_cg_mm) if np.isfinite(h_ra_cg_mm) else None,
+                "pitch_arm_m": float(pitch_arm_m),
+                "roll_arm_m": float(roll_arm_m),
                 "delta_load_fl_mech_n": float(delta_load_fl_mech_n),
                 "delta_load_fr_mech_n": float(delta_load_fr_mech_n),
                 "delta_load_rl_mech_n": float(delta_load_rl_mech_n),
@@ -814,9 +873,35 @@ def _compute_operating_point(json_data: dict, params: dict, _static_ref: dict = 
     ft_m = front_track_mm / 1000.0
     rt_m = rear_track_mm / 1000.0
 
-    long_tf_n = mass_sprung_total * ax_mps2 * h_cg_m / max(wb_m, 1e-9)
-    lat_tf_f_n = (front_sprung_axle_n / g) * ay_mps2 * h_cg_m / max(ft_m, 1e-9)
-    lat_tf_r_n = (rear_sprung_axle_n / g) * ay_mps2 * h_cg_m / max(rt_m, 1e-9)
+    front_rc_h_mm = float(analysis.get("front_rc_height_mm", np.nan))
+    rear_rc_h_mm = float(analysis.get("rear_rc_height_mm", np.nan))
+    if not np.isfinite(front_rc_h_mm):
+        front_rc_h_mm = float(analysis.get("front_rc_z_mm", np.nan))
+    if not np.isfinite(rear_rc_h_mm):
+        rear_rc_h_mm = float(analysis.get("rear_rc_z_mm", np.nan))
+
+    lam_cg = float(np.clip(longitudinal_ratio, 0.0, 1.0))
+    h_ra_cg_mm = (
+        front_rc_h_mm + lam_cg * (rear_rc_h_mm - front_rc_h_mm)
+        if (np.isfinite(front_rc_h_mm) and np.isfinite(rear_rc_h_mm))
+        else np.nan
+    )
+    h_ra_cg_m = (h_ra_cg_mm / 1000.0) if np.isfinite(h_ra_cg_mm) else 0.0
+
+    pitch_ic_f_z_mm = float(analysis.get("pitch_ic_front_z_mm", np.nan))
+    pitch_ic_r_z_mm = float(analysis.get("pitch_ic_rear_z_mm", np.nan))
+    if np.isfinite(pitch_ic_f_z_mm) and np.isfinite(pitch_ic_r_z_mm):
+        h_pc_mm = pitch_ic_f_z_mm + lam_cg * (pitch_ic_r_z_mm - pitch_ic_f_z_mm)
+    else:
+        h_pc_mm = float(analysis.get("pitch_z_mm", np.nan))
+    h_pc_m = (h_pc_mm / 1000.0) if np.isfinite(h_pc_mm) else 0.0
+
+    pitch_arm_m = h_cg_m - h_pc_m
+    roll_arm_m = h_cg_m - h_ra_cg_m
+
+    long_tf_n = mass_sprung_total * ax_mps2 * pitch_arm_m / max(wb_m, 1e-9)
+    lat_tf_f_n = (front_sprung_axle_n / g) * ay_mps2 * roll_arm_m / max(ft_m, 1e-9)
+    lat_tf_r_n = (rear_sprung_axle_n / g) * ay_mps2 * roll_arm_m / max(rt_m, 1e-9)
 
     fz_fl = fl_static_n + (-0.5 * long_tf_n) + (-0.5 * lat_tf_f_n) + 0.5 * front_aero_load_n
     fz_fr = fr_static_n + (-0.5 * long_tf_n) + (+0.5 * lat_tf_f_n) + 0.5 * front_aero_load_n
@@ -897,6 +982,10 @@ def _compute_operating_point(json_data: dict, params: dict, _static_ref: dict = 
         "load_transfer_longitudinal_n": float(long_tf_n),
         "lateral_transfer_front_total_n": float(lat_tf_f_n),
         "lateral_transfer_rear_total_n": float(lat_tf_r_n),
+        "h_pc_mm": float(h_pc_mm) if np.isfinite(h_pc_mm) else None,
+        "h_ra_cg_mm": float(h_ra_cg_mm) if np.isfinite(h_ra_cg_mm) else None,
+        "pitch_arm_m": float(pitch_arm_m),
+        "roll_arm_m": float(roll_arm_m),
         "fz_mechanical_fl_n": float(fl_static_n + (-0.5 * long_tf_n) + (-0.5 * lat_tf_f_n)),
         "fz_mechanical_fr_n": float(fr_static_n + (-0.5 * long_tf_n) + (+0.5 * lat_tf_f_n)),
         "fz_mechanical_rl_n": float(rl_static_n + (+0.5 * long_tf_n) + (-0.5 * lat_tf_r_n)),
@@ -1068,6 +1157,678 @@ def _build_sensitivity_data(json_data: dict, body: dict) -> Dict[str, object]:
         "output_labels": output_labels,
         "csv": csv_io.getvalue(),
     }
+
+
+def _json_signature(json_data: Dict[str, Any]) -> str:
+    raw = json.dumps(json_data, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha1(raw).hexdigest()
+
+
+def _infer_model_id(json_data: Dict[str, Any], requested_model_id: Optional[str] = None) -> str:
+    if not VEHICLE_REGISTRY:
+        if requested_model_id:
+            return str(requested_model_id).strip()
+        cfg = json_data.get("config", {}) if isinstance(json_data.get("config"), dict) else {}
+        return str(cfg.get("model_id", json_data.get("model_id", "default"))).strip() or "default"
+
+    if requested_model_id:
+        model_id = str(requested_model_id).strip()
+        if model_id not in VEHICLE_REGISTRY:
+            raise ValueError(
+                f"Unknown model_id '{model_id}'. Available: {', '.join(sorted(VEHICLE_REGISTRY.keys()))}"
+            )
+        return model_id
+
+    cfg = json_data.get("config", {}) if isinstance(json_data.get("config"), dict) else {}
+    candidates = [
+        cfg.get("model_id"),
+        cfg.get("vehicleModelId"),
+        cfg.get("vehicle_model_id"),
+        json_data.get("model_id"),
+        "F2_2026",
+    ]
+    for value in candidates:
+        if value is None:
+            continue
+        model_id = str(value).strip()
+        if model_id in VEHICLE_REGISTRY:
+            return model_id
+    if VEHICLE_REGISTRY:
+        return sorted(VEHICLE_REGISTRY.keys())[0]
+    raise ValueError("No registered vehicle models are available in suspension_model.VEHICLE_REGISTRY.")
+
+
+def _build_calibrated_json_base(
+    json_data: Dict[str, Any],
+    model_id: Optional[str] = None,
+    force_rebuild: bool = False,
+) -> Dict[str, Any]:
+    if not isinstance(json_data, dict):
+        raise ValueError("Invalid JSON payload for calibration.")
+
+    resolved_model_id = _infer_model_id(json_data, model_id)
+    signature = _json_signature(json_data)
+    cache_key = f"{resolved_model_id}:{signature}"
+    cache = _state.get("gg_calibration_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        _state["gg_calibration_cache"] = cache
+
+    if (not force_rebuild) and (cache_key in cache):
+        cached = cache.get(cache_key) or {}
+        return {
+            "calibrated_json_data": cached.get("calibrated_json_data"),
+            "calibration_result": cached.get("calibration_result"),
+            "metadata": dict(cached.get("metadata") or {}),
+        }
+
+    global _CALIBRATOR_AVAILABLE, calibrate_geometry, write_calibrated_json
+    if not _CALIBRATOR_AVAILABLE or calibrate_geometry is None or write_calibrated_json is None:
+        try:
+            cal_mod = importlib.import_module("calibrator")
+            calibrate_geometry = getattr(cal_mod, "calibrate", None)
+            write_calibrated_json = getattr(cal_mod, "write_calibrated_json", None)
+            _CALIBRATOR_AVAILABLE = callable(calibrate_geometry) and callable(write_calibrated_json)
+        except Exception:
+            _CALIBRATOR_AVAILABLE = False
+
+    if not _CALIBRATOR_AVAILABLE or calibrate_geometry is None or write_calibrated_json is None:
+        metadata = {
+            "calibration_applied": False,
+            "calibration_model_id": resolved_model_id,
+            "calibration_model_desc": "",
+            "json_signature": signature,
+            "warning": "calibrator.py dependencies are unavailable; using raw JSON geometry.",
+        }
+        cache[cache_key] = {
+            "calibrated_json_data": json_data,
+            "calibration_result": {},
+            "metadata": metadata,
+        }
+        return {
+            "calibrated_json_data": json_data,
+            "calibration_result": {},
+            "metadata": metadata,
+        }
+
+    calibration_result = calibrate_geometry(json_data, model_id=resolved_model_id, verbose=False)
+    calibrated_json_data = write_calibrated_json(json_data, calibration_result)
+    metadata = {
+        "calibration_applied": True,
+        "calibration_model_id": resolved_model_id,
+        "calibration_model_desc": calibration_result.get("model_desc", ""),
+        "json_signature": signature,
+    }
+
+    cache[cache_key] = {
+        "calibrated_json_data": calibrated_json_data,
+        "calibration_result": calibration_result,
+        "metadata": metadata,
+    }
+    return {
+        "calibrated_json_data": calibrated_json_data,
+        "calibration_result": calibration_result,
+        "metadata": metadata,
+    }
+
+
+def _get_or_build_gg_base_geometry(json_data: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+    model_id = body.get("model_id")
+    force_rebuild = bool(body.get("force_rebuild_calibration", False))
+    return _build_calibrated_json_base(json_data=json_data, model_id=model_id, force_rebuild=force_rebuild)
+
+
+def _safe_axis_values(start: float, end: float, step: float, max_points: int = 41) -> Tuple[List[float], bool]:
+    values = _dynamic_range(start, end, step)
+    if len(values) <= max_points:
+        return values, False
+    idx = np.linspace(0, len(values) - 1, max_points).round().astype(int)
+    sampled = [float(values[int(i)]) for i in idx]
+    return sampled, True
+
+
+def _extract_camber_defaults_deg(json_data: Dict[str, Any]) -> Dict[str, float]:
+    cfg = json_data.get("config", {}) if isinstance(json_data.get("config"), dict) else {}
+    sus = cfg.get("suspension", {}) if isinstance(cfg.get("suspension"), dict) else {}
+    front = (((sus.get("front") or {}).get("external") or {}).get("aCamberSetupAlignment") or {})
+    rear = (((sus.get("rear") or {}).get("external") or {}).get("aCamberSetupAlignment") or {})
+
+    def _deg(block: Dict[str, Any]) -> float:
+        try:
+            return float(math.degrees(float(block.get("aCamberSetup", 0.0))))
+        except Exception:
+            return 0.0
+
+    f_deg = _deg(front)
+    r_deg = _deg(rear)
+    return {
+        "camber_fl_deg": f_deg,
+        "camber_fr_deg": f_deg,
+        "camber_rl_deg": r_deg,
+        "camber_rr_deg": r_deg,
+    }
+
+
+def _reduce_envelope_points(points: List[Dict[str, float]], max_points: int = 250) -> List[Dict[str, float]]:
+    if len(points) <= max_points:
+        return points
+    idx = np.linspace(0, len(points) - 1, max_points).round().astype(int)
+    return [points[int(i)] for i in idx]
+
+
+def _build_tyre_fx_fy_envelope(
+    tyre_cfg: Dict[str, Any],
+    fz_n: float,
+    camber_deg: float,
+    grip_scale: float,
+    alpha_min_deg: float,
+    alpha_max_deg: float,
+    alpha_steps: int,
+    kappa_min: float,
+    kappa_max: float,
+    kappa_steps: int,
+) -> Dict[str, Any]:
+    alpha_steps_i = int(max(3, alpha_steps))
+    kappa_steps_i = int(max(3, kappa_steps))
+    alpha_vals = np.linspace(float(alpha_min_deg), float(alpha_max_deg), alpha_steps_i)
+    kappa_vals = np.linspace(float(kappa_min), float(kappa_max), kappa_steps_i)
+
+    samples: List[Dict[str, float]] = []
+    max_fx_abs = -1.0
+    max_fy_abs = -1.0
+    sample_fxmax: Optional[Dict[str, float]] = None
+    sample_fymax: Optional[Dict[str, float]] = None
+
+    for alpha in alpha_vals:
+        for kappa in kappa_vals:
+            out = _mf_tyre_combined_from_json(
+                tyre_cfg=tyre_cfg,
+                fz_n=float(fz_n),
+                slip_angle_deg=float(alpha),
+                slip_ratio=float(kappa),
+                camber_deg=float(camber_deg),
+                grip_scale=float(grip_scale),
+            )
+            fx_n = float(out.get("fx_n", 0.0))
+            fy_n = float(out.get("fy_n", 0.0))
+            row = {
+                "slip_angle_deg": float(alpha),
+                "slip_ratio": float(kappa),
+                "fx_n": fx_n,
+                "fy_n": fy_n,
+            }
+            samples.append(row)
+            if abs(fx_n) > max_fx_abs:
+                max_fx_abs = abs(fx_n)
+                sample_fxmax = row
+            if abs(fy_n) > max_fy_abs:
+                max_fy_abs = abs(fy_n)
+                sample_fymax = row
+
+    if sample_fxmax is None:
+        sample_fxmax = {"fx_n": 0.0, "fy_n": 0.0, "slip_angle_deg": 0.0, "slip_ratio": 0.0}
+    if sample_fymax is None:
+        sample_fymax = {"fx_n": 0.0, "fy_n": 0.0, "slip_angle_deg": 0.0, "slip_ratio": 0.0}
+
+    return {
+        "samples": _reduce_envelope_points(samples, max_points=320),
+        "envelope_points": _reduce_envelope_points(samples, max_points=220),
+        "fx_max_n": float(max_fx_abs if max_fx_abs > 0.0 else 0.0),
+        "fy_max_n": float(max_fy_abs if max_fy_abs > 0.0 else 0.0),
+        "fx_at_fymax_n": float(sample_fymax.get("fx_n", 0.0)),
+        "fy_at_fxmax_n": float(sample_fxmax.get("fy_n", 0.0)),
+        "slip_angle_at_fxmax_deg": float(sample_fxmax.get("slip_angle_deg", 0.0)),
+        "slip_ratio_at_fxmax": float(sample_fxmax.get("slip_ratio", 0.0)),
+        "slip_angle_at_fymax_deg": float(sample_fymax.get("slip_angle_deg", 0.0)),
+        "slip_ratio_at_fymax": float(sample_fymax.get("slip_ratio", 0.0)),
+    }
+
+
+def _select_envelope_point_by_direction(
+    envelope: Dict[str, Any],
+    ax_g_target: float,
+    ay_g_target: float,
+    fx_pos_scale: float = 1.0,
+    fx_neg_scale: float = 1.0,
+) -> Dict[str, float]:
+    samples = envelope.get("samples", [])
+    if not isinstance(samples, list) or not samples:
+        return {"fx_n": 0.0, "fy_n": 0.0, "slip_angle_deg": 0.0, "slip_ratio": 0.0}
+    dx = float(ax_g_target)
+    dy = float(ay_g_target)
+    norm = math.hypot(dx, dy)
+    if norm <= 1e-12:
+        return {"fx_n": 0.0, "fy_n": 0.0, "slip_angle_deg": 0.0, "slip_ratio": 0.0}
+    ux = dx / norm
+    uy = dy / norm
+
+    best_fx = 0.0
+    best_fy = 0.0
+    best_sa = 0.0
+    best_sr = 0.0
+    best_proj = -1e18
+    for s in samples:
+        if not isinstance(s, dict):
+            continue
+        fx_raw = float(s.get("fx_n", 0.0))
+        fx = fx_raw * (float(fx_pos_scale) if fx_raw >= 0.0 else float(fx_neg_scale))
+        fy = float(s.get("fy_n", 0.0))
+        proj = fx * ux + fy * uy
+        if proj > best_proj:
+            best_proj = proj
+            best_fx = fx
+            best_fy = fy
+            best_sa = float(s.get("slip_angle_deg", 0.0))
+            best_sr = float(s.get("slip_ratio", 0.0))
+    return {"fx_n": best_fx, "fy_n": best_fy, "slip_angle_deg": best_sa, "slip_ratio": best_sr}
+
+
+def _gg_longitudinal_caps(body: Dict[str, Any]) -> Dict[str, float]:
+    drive_layout = str(body.get("drive_layout", "rwd")).strip().lower()
+    if drive_layout == "fwd":
+        default_front_trac, default_rear_trac = 1.0, 0.0
+    elif drive_layout == "awd":
+        default_front_trac, default_rear_trac = 1.0, 1.0
+    else:
+        default_front_trac, default_rear_trac = 0.0, 1.0
+
+    traction_front = float(body.get("traction_front_scale", default_front_trac))
+    traction_rear = float(body.get("traction_rear_scale", default_rear_trac))
+    bb_front_pct = float(body.get("brake_balance_front_pct", 60.0))
+    bb_front = float(np.clip(bb_front_pct / 100.0, 0.0, 1.0))
+    bb_rear = 1.0 - bb_front
+    # Backward compatibility: explicit per-axle scales still override balance if sent.
+    brake_front = float(body.get("brake_front_scale", bb_front))
+    brake_rear = float(body.get("brake_rear_scale", bb_rear))
+
+    return {
+        "fl_pos": max(0.0, traction_front),
+        "fr_pos": max(0.0, traction_front),
+        "rl_pos": max(0.0, traction_rear),
+        "rr_pos": max(0.0, traction_rear),
+        "fl_neg": max(0.0, brake_front),
+        "fr_neg": max(0.0, brake_front),
+        "rl_neg": max(0.0, brake_rear),
+        "rr_neg": max(0.0, brake_rear),
+    }
+
+
+def _gg_fixed_inputs(calibrated_json_data: Dict[str, Any], body: Dict[str, Any], base_state: Dict[str, float]) -> Dict[str, Any]:
+    g = 9.80665
+    acc_units = str(body.get("acc_units", "g")).lower()
+    ax_raw = float(body.get("ax_g_target", body.get("ax_g", body.get("ax", 0.0))))
+    ay_raw = float(body.get("ay_g_target", body.get("ay_g", body.get("ay", 0.0))))
+    ax_g = ax_raw if acc_units in {"g", "gee"} else ax_raw / g
+    ay_g = ay_raw if acc_units in {"g", "gee"} else ay_raw / g
+
+    camber_defaults = _extract_camber_defaults_deg(calibrated_json_data)
+    payload = {
+        "speed_kph": float(body.get("speed_kph", 140.0)),
+        "air_density": float(body.get("air_density", 1.225)),
+        "drs_on": bool(body.get("drs_on", False)),
+        "ax_g": float(ax_g),
+        "ay_g": float(ay_g),
+        # GG philosophy:
+        # - Slip is not a user input here; envelope sweep already scans alpha/kappa space.
+        # - Camber comes from setup/calibrated base geometry.
+        "slip_angle_fl_deg": 0.0,
+        "slip_angle_fr_deg": 0.0,
+        "slip_angle_rl_deg": 0.0,
+        "slip_angle_rr_deg": 0.0,
+        "slip_ratio_fl": 0.0,
+        "slip_ratio_fr": 0.0,
+        "slip_ratio_rl": 0.0,
+        "slip_ratio_rr": 0.0,
+        "camber_fl_deg": float(camber_defaults["camber_fl_deg"]),
+        "camber_fr_deg": float(camber_defaults["camber_fr_deg"]),
+        "camber_rl_deg": float(camber_defaults["camber_rl_deg"]),
+        "camber_rr_deg": float(camber_defaults["camber_rr_deg"]),
+        "base_state": {
+            "hf": float(base_state.get("hf", 0.0)),
+            "hr": float(base_state.get("hr", 0.0)),
+            "rf": float(base_state.get("rf", 0.0)),
+            "rr": float(base_state.get("rr", 0.0)),
+        },
+    }
+    return payload
+
+
+def _build_gg_row_from_outputs(
+    point_outputs: Dict[str, Any],
+    env_fl: Dict[str, Any],
+    env_fr: Dict[str, Any],
+    env_rl: Dict[str, Any],
+    env_rr: Dict[str, Any],
+    ax_g_target: float,
+    ay_g_target: float,
+    longitudinal_caps: Optional[Dict[str, float]] = None,
+    include_envelopes: bool = False,
+) -> Dict[str, Any]:
+    longitudinal_caps = longitudinal_caps or {}
+    # Use real combined-slip cloud and pick the point aligned with requested
+    # acceleration direction. This avoids the "star/rays" artifact.
+    pt_fl = _select_envelope_point_by_direction(
+        env_fl, ax_g_target, ay_g_target,
+        fx_pos_scale=float(longitudinal_caps.get("fl_pos", 1.0)),
+        fx_neg_scale=float(longitudinal_caps.get("fl_neg", 1.0)),
+    )
+    pt_fr = _select_envelope_point_by_direction(
+        env_fr, ax_g_target, ay_g_target,
+        fx_pos_scale=float(longitudinal_caps.get("fr_pos", 1.0)),
+        fx_neg_scale=float(longitudinal_caps.get("fr_neg", 1.0)),
+    )
+    pt_rl = _select_envelope_point_by_direction(
+        env_rl, ax_g_target, ay_g_target,
+        fx_pos_scale=float(longitudinal_caps.get("rl_pos", 1.0)),
+        fx_neg_scale=float(longitudinal_caps.get("rl_neg", 1.0)),
+    )
+    pt_rr = _select_envelope_point_by_direction(
+        env_rr, ax_g_target, ay_g_target,
+        fx_pos_scale=float(longitudinal_caps.get("rr_pos", 1.0)),
+        fx_neg_scale=float(longitudinal_caps.get("rr_neg", 1.0)),
+    )
+    fx_fl, fy_fl = float(pt_fl["fx_n"]), float(pt_fl["fy_n"])
+    fx_fr, fy_fr = float(pt_fr["fx_n"]), float(pt_fr["fy_n"])
+    fx_rl, fy_rl = float(pt_rl["fx_n"]), float(pt_rl["fy_n"])
+    fx_rr, fy_rr = float(pt_rr["fx_n"]), float(pt_rr["fy_n"])
+
+    state = point_outputs.get("state_4w", {}) if isinstance(point_outputs.get("state_4w"), dict) else {}
+    row = {
+        "ax_g_target": float(ax_g_target),
+        "ay_g_target": float(ay_g_target),
+        "hf": float(state.get("hf", 0.0)),
+        "hr": float(state.get("hr", 0.0)),
+        "rf": float(state.get("rf", 0.0)),
+        "rr": float(state.get("rr", 0.0)),
+        "hRideF": float(point_outputs.get("hRideF", 0.0)),
+        "hRideR": float(point_outputs.get("hRideR", 0.0)),
+        "hRideF_mm": float(point_outputs.get("hRideF", 0.0)) * 1000.0,
+        "hRideR_mm": float(point_outputs.get("hRideR", 0.0)) * 1000.0,
+        "pitch_deg": float(point_outputs.get("pitch_deg", 0.0)),
+        "roll_deg": float(point_outputs.get("roll_deg", 0.0)),
+        "fz_total_fl_n": float(point_outputs.get("fz_total_fl_n", point_outputs.get("total_load_fl_n", 0.0))),
+        "fz_total_fr_n": float(point_outputs.get("fz_total_fr_n", point_outputs.get("total_load_fr_n", 0.0))),
+        "fz_total_rl_n": float(point_outputs.get("fz_total_rl_n", point_outputs.get("total_load_rl_n", 0.0))),
+        "fz_total_rr_n": float(point_outputs.get("fz_total_rr_n", point_outputs.get("total_load_rr_n", 0.0)),
+        ),
+        "fx_fl_n": fx_fl,
+        "fx_fr_n": fx_fr,
+        "fx_rl_n": fx_rl,
+        "fx_rr_n": fx_rr,
+        "fy_fl_n": fy_fl,
+        "fy_fr_n": fy_fr,
+        "fy_rl_n": fy_rl,
+        "fy_rr_n": fy_rr,
+        "fx_front_axle_n": float(fx_fl + fx_fr),
+        "fy_front_axle_n": float(fy_fl + fy_fr),
+        "fx_rear_axle_n": float(fx_rl + fx_rr),
+        "fy_rear_axle_n": float(fy_rl + fy_rr),
+        "fx_total_n": float(fx_fl + fx_fr + fx_rl + fx_rr),
+        "fy_total_n": float(fy_fl + fy_fr + fy_rl + fy_rr),
+        "slip_angle_fl_deg_used": float(pt_fl["slip_angle_deg"]),
+        "slip_angle_fr_deg_used": float(pt_fr["slip_angle_deg"]),
+        "slip_angle_rl_deg_used": float(pt_rl["slip_angle_deg"]),
+        "slip_angle_rr_deg_used": float(pt_rr["slip_angle_deg"]),
+        "slip_ratio_fl_used": float(pt_fl["slip_ratio"]),
+        "slip_ratio_fr_used": float(pt_fr["slip_ratio"]),
+        "slip_ratio_rl_used": float(pt_rl["slip_ratio"]),
+        "slip_ratio_rr_used": float(pt_rr["slip_ratio"]),
+        "aero_balance_front_pct": _json_scalar(point_outputs.get("aero_balance_front_pct")),
+        "drag_force_n": _json_scalar(point_outputs.get("drag_force_n")),
+        "front_aero_load_n": _json_scalar(point_outputs.get("front_aero_load_n")),
+        "rear_aero_load_n": _json_scalar(point_outputs.get("rear_aero_load_n")),
+        "total_aero_load_n": _json_scalar(point_outputs.get("total_aero_load_n")),
+    }
+    if include_envelopes:
+        row["tyre_envelope_fl"] = env_fl
+        row["tyre_envelope_fr"] = env_fr
+        row["tyre_envelope_rl"] = env_rl
+        row["tyre_envelope_rr"] = env_rr
+    return _json_clean(row)
+
+
+def _evaluate_gg_point_frozen(
+    calibrated_json_data: Dict[str, Any],
+    speed_kph: float,
+    ax_g_target: float,
+    ay_g_target: float,
+    base_state: Dict[str, float],
+    envelope_settings: Dict[str, Any],
+    static_ref: Optional[Dict[str, Any]] = None,
+    body: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    body = body or {}
+    fixed = _gg_fixed_inputs(calibrated_json_data, {**body, "speed_kph": speed_kph, "ax_g_target": ax_g_target, "ay_g_target": ay_g_target}, base_state)
+    params = {
+        **fixed,
+        "hf": float(base_state.get("hf", 0.0)),
+        "hr": float(base_state.get("hr", 0.0)),
+        "rf": float(base_state.get("rf", 0.0)),
+        "rr": float(base_state.get("rr", 0.0)),
+    }
+    outputs = _compute_operating_point(calibrated_json_data, params, _static_ref=static_ref)
+
+    cfg = calibrated_json_data.get("config", {}) if isinstance(calibrated_json_data.get("config"), dict) else {}
+    tyres = cfg.get("tyres", {}) if isinstance(cfg.get("tyres"), dict) else {}
+    front_tyre = tyres.get("front", {}) if isinstance(tyres.get("front"), dict) else {}
+    rear_tyre = tyres.get("rear", {}) if isinstance(tyres.get("rear"), dict) else {}
+    grip_global = float(tyres.get("rGripFactor", 1.0))
+    grip_front = grip_global * float(front_tyre.get("rGripFactor", 1.0))
+    grip_rear = grip_global * float(rear_tyre.get("rGripFactor", 1.0))
+
+    env_fl = _build_tyre_fx_fy_envelope(front_tyre, float(outputs.get("total_load_fl_n", 0.0)), float(fixed["camber_fl_deg"]), grip_front, **envelope_settings)
+    env_fr = _build_tyre_fx_fy_envelope(front_tyre, float(outputs.get("total_load_fr_n", 0.0)), float(fixed["camber_fr_deg"]), grip_front, **envelope_settings)
+    env_rl = _build_tyre_fx_fy_envelope(rear_tyre, float(outputs.get("total_load_rl_n", 0.0)), float(fixed["camber_rl_deg"]), grip_rear, **envelope_settings)
+    env_rr = _build_tyre_fx_fy_envelope(rear_tyre, float(outputs.get("total_load_rr_n", 0.0)), float(fixed["camber_rr_deg"]), grip_rear, **envelope_settings)
+    caps = _gg_longitudinal_caps(body)
+    return _build_gg_row_from_outputs(outputs, env_fl, env_fr, env_rl, env_rr, ax_g_target, ay_g_target, longitudinal_caps=caps)
+
+
+def _evaluate_gg_point_relaxed(
+    calibrated_json_data: Dict[str, Any],
+    speed_kph: float,
+    ax_g_target: float,
+    ay_g_target: float,
+    base_state: Dict[str, float],
+    state_bounds: Dict[str, Any],
+    ride_height_limits: Dict[str, Any],
+    envelope_settings: Dict[str, Any],
+    optimization_settings: Dict[str, Any],
+    static_ref: Optional[Dict[str, Any]] = None,
+    body: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    body = body or {}
+    fixed = _gg_fixed_inputs(
+        calibrated_json_data,
+        {**body, "speed_kph": speed_kph, "ax_g_target": ax_g_target, "ay_g_target": ay_g_target},
+        base_state,
+    )
+
+    variables = [
+        OptimizationVariable("front_heave", float(state_bounds.get("front_heave_min", -8.0)), float(state_bounds.get("front_heave_max", 8.0)), float(base_state.get("hf", 0.0)), True),
+        OptimizationVariable("rear_heave", float(state_bounds.get("rear_heave_min", -8.0)), float(state_bounds.get("rear_heave_max", 8.0)), float(base_state.get("hr", 0.0)), True),
+        OptimizationVariable("front_roll", float(state_bounds.get("front_roll_min", -12.0)), float(state_bounds.get("front_roll_max", 12.0)), float(base_state.get("rf", 0.0)), True),
+        OptimizationVariable("rear_roll", float(state_bounds.get("rear_roll_min", -12.0)), float(state_bounds.get("rear_roll_max", 12.0)), float(base_state.get("rr", 0.0)), True),
+    ]
+
+    constraints = [
+        OptimizationConstraint("hRideF", "ge", float(ride_height_limits.get("hRideF_min_m", 0.020)), 180.0),
+        OptimizationConstraint("hRideR", "ge", float(ride_height_limits.get("hRideR_min_m", 0.030)), 180.0),
+        OptimizationConstraint("total_load_fl_n", "ge", 1.0, 25.0),
+        OptimizationConstraint("total_load_fr_n", "ge", 1.0, 25.0),
+        OptimizationConstraint("total_load_rl_n", "ge", 1.0, 25.0),
+        OptimizationConstraint("total_load_rr_n", "ge", 1.0, 25.0),
+    ]
+
+    problem = OptimizationProblem(
+        objective_mode="minimize",
+        objective_name="drag_force_n",
+        objective_target=None,
+        variables=variables,
+        constraints=constraints,
+        fixed_inputs=fixed,
+        search_method=str(optimization_settings.get("search_method", optimization_settings.get("method", "auto"))),
+        max_global_points=int(optimization_settings.get("max_global_points", 80)),
+        n_best_candidates=int(optimization_settings.get("n_best_candidates", 3)),
+    )
+
+    def _evaluator(sim_inputs: Dict[str, Any]) -> Dict[str, Any]:
+        return _compute_operating_point(calibrated_json_data, sim_inputs, _static_ref=static_ref)
+
+    result = run_optimization(problem, _evaluator)
+    best = result.best_candidate
+    outputs = dict(best.outputs or {})
+    outputs["state_4w"] = dict(best.outputs.get("state_4w") or {})
+
+    cfg = calibrated_json_data.get("config", {}) if isinstance(calibrated_json_data.get("config"), dict) else {}
+    tyres = cfg.get("tyres", {}) if isinstance(cfg.get("tyres"), dict) else {}
+    front_tyre = tyres.get("front", {}) if isinstance(tyres.get("front"), dict) else {}
+    rear_tyre = tyres.get("rear", {}) if isinstance(tyres.get("rear"), dict) else {}
+    grip_global = float(tyres.get("rGripFactor", 1.0))
+    grip_front = grip_global * float(front_tyre.get("rGripFactor", 1.0))
+    grip_rear = grip_global * float(rear_tyre.get("rGripFactor", 1.0))
+
+    env_fl = _build_tyre_fx_fy_envelope(front_tyre, float(outputs.get("total_load_fl_n", 0.0)), float(fixed["camber_fl_deg"]), grip_front, **envelope_settings)
+    env_fr = _build_tyre_fx_fy_envelope(front_tyre, float(outputs.get("total_load_fr_n", 0.0)), float(fixed["camber_fr_deg"]), grip_front, **envelope_settings)
+    env_rl = _build_tyre_fx_fy_envelope(rear_tyre, float(outputs.get("total_load_rl_n", 0.0)), float(fixed["camber_rl_deg"]), grip_rear, **envelope_settings)
+    env_rr = _build_tyre_fx_fy_envelope(rear_tyre, float(outputs.get("total_load_rr_n", 0.0)), float(fixed["camber_rr_deg"]), grip_rear, **envelope_settings)
+
+    caps = _gg_longitudinal_caps(body)
+    row = _build_gg_row_from_outputs(outputs, env_fl, env_fr, env_rl, env_rr, ax_g_target, ay_g_target, longitudinal_caps=caps)
+    row["optimizer_total_cost"] = float(best.total_cost)
+    row["optimizer_penalty_value"] = float(best.penalty_value)
+    row["optimizer_objective_raw"] = float(best.objective_value_raw)
+    return row
+
+
+def _split_gg_rows(rows: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    rows_total: List[Dict[str, Any]] = []
+    rows_front: List[Dict[str, Any]] = []
+    rows_rear: List[Dict[str, Any]] = []
+    rows_fl: List[Dict[str, Any]] = []
+    rows_fr: List[Dict[str, Any]] = []
+    rows_rl: List[Dict[str, Any]] = []
+    rows_rr: List[Dict[str, Any]] = []
+
+    for r in rows:
+        ax = float(r.get("ax_g_target", 0.0))
+        ay = float(r.get("ay_g_target", 0.0))
+        rows_total.append({"ax": ax, "ay": ay, "fx": float(r.get("fx_total_n", 0.0)), "fy": float(r.get("fy_total_n", 0.0)), "metadata": r})
+        rows_front.append({"ax": ax, "ay": ay, "fx": float(r.get("fx_front_axle_n", 0.0)), "fy": float(r.get("fy_front_axle_n", 0.0)), "metadata": r})
+        rows_rear.append({"ax": ax, "ay": ay, "fx": float(r.get("fx_rear_axle_n", 0.0)), "fy": float(r.get("fy_rear_axle_n", 0.0)), "metadata": r})
+        rows_fl.append({"ax": ax, "ay": ay, "fx": float(r.get("fx_fl_n", 0.0)), "fy": float(r.get("fy_fl_n", 0.0)), "metadata": r})
+        rows_fr.append({"ax": ax, "ay": ay, "fx": float(r.get("fx_fr_n", 0.0)), "fy": float(r.get("fy_fr_n", 0.0)), "metadata": r})
+        rows_rl.append({"ax": ax, "ay": ay, "fx": float(r.get("fx_rl_n", 0.0)), "fy": float(r.get("fy_rl_n", 0.0)), "metadata": r})
+        rows_rr.append({"ax": ax, "ay": ay, "fx": float(r.get("fx_rr_n", 0.0)), "fy": float(r.get("fy_rr_n", 0.0)), "metadata": r})
+
+    return {
+        "rows_total": _json_clean(rows_total),
+        "rows_front_axle": _json_clean(rows_front),
+        "rows_rear_axle": _json_clean(rows_rear),
+        "rows_fl": _json_clean(rows_fl),
+        "rows_fr": _json_clean(rows_fr),
+        "rows_rl": _json_clean(rows_rl),
+        "rows_rr": _json_clean(rows_rr),
+    }
+
+
+def _compute_gg_static_map(
+    calibrated_json_data: Dict[str, Any],
+    body: Dict[str, Any],
+    mode: str = "frozen",
+) -> Dict[str, Any]:
+    envelope_settings = dict(body.get("envelope_settings") or {})
+    envelope_settings = {
+        "alpha_min_deg": float(envelope_settings.get("alpha_min_deg", -18.0)),
+        "alpha_max_deg": float(envelope_settings.get("alpha_max_deg", 18.0)),
+        "alpha_steps": int(envelope_settings.get("alpha_steps", 41)),
+        "kappa_min": float(envelope_settings.get("kappa_min", -0.20)),
+        "kappa_max": float(envelope_settings.get("kappa_max", 0.20)),
+        "kappa_steps": int(envelope_settings.get("kappa_steps", 41)),
+    }
+    base_state_in = body.get("base_state") if isinstance(body.get("base_state"), dict) else {}
+    base_state = {
+        "hf": float(base_state_in.get("hf", 0.0)),
+        "hr": float(base_state_in.get("hr", 0.0)),
+        "rf": float(base_state_in.get("rf", 0.0)),
+        "rr": float(base_state_in.get("rr", 0.0)),
+    }
+    state_bounds = dict(body.get("state_bounds") or {})
+    ride_height_limits = dict(body.get("ride_height_limits") or {})
+    optimization_settings = dict(body.get("optimization") or {})
+
+    ax_values, ax_clipped = _safe_axis_values(float(body.get("ax_min_g", -3.0)), float(body.get("ax_max_g", 2.0)), float(body.get("ax_step_g", 0.25)))
+    ay_values, ay_clipped = _safe_axis_values(float(body.get("ay_min_g", -4.0)), float(body.get("ay_max_g", 4.0)), float(body.get("ay_step_g", 0.25)))
+
+    warnings: List[str] = []
+    if ax_clipped:
+        warnings.append("Ax grid was reduced to 41 points for runtime control.")
+    if ay_clipped:
+        warnings.append("Ay grid was reduced to 41 points for runtime control.")
+
+    static_ref = compute_center_antis_for_state(calibrated_json_data, hf=0.0, rf=0.0, hr=0.0, rr=0.0)
+    rows: List[Dict[str, Any]] = []
+    for ax_g in ax_values:
+        for ay_g in ay_values:
+            if mode == "relaxed":
+                row = _evaluate_gg_point_relaxed(
+                    calibrated_json_data=calibrated_json_data,
+                    speed_kph=float(body.get("speed_kph", 140.0)),
+                    ax_g_target=float(ax_g),
+                    ay_g_target=float(ay_g),
+                    base_state=base_state,
+                    state_bounds=state_bounds,
+                    ride_height_limits=ride_height_limits,
+                    envelope_settings=envelope_settings,
+                    optimization_settings=optimization_settings,
+                    static_ref=static_ref,
+                    body=body,
+                )
+            else:
+                row = _evaluate_gg_point_frozen(
+                    calibrated_json_data=calibrated_json_data,
+                    speed_kph=float(body.get("speed_kph", 140.0)),
+                    ax_g_target=float(ax_g),
+                    ay_g_target=float(ay_g),
+                    base_state=base_state,
+                    envelope_settings=envelope_settings,
+                    static_ref=static_ref,
+                    body=body,
+                )
+            rows.append(row)
+
+    split = _split_gg_rows(rows)
+    return {
+        "mode": mode,
+        "rows": _json_clean(rows),
+        **split,
+        "meta": {
+            "speed_kph": float(body.get("speed_kph", 140.0)),
+            "grid_shape": [len(ax_values), len(ay_values)],
+            "warnings": warnings,
+        },
+    }
+
+
+def _compute_gg_state_families(calibrated_json_data: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+    family_mode = str(body.get("family_mode", "relaxed")).strip().lower()
+    families = body.get("families") if isinstance(body.get("families"), list) else []
+    if not families:
+        raise ValueError("State Families requires at least one family definition.")
+
+    runs: List[Dict[str, Any]] = []
+    for idx, family in enumerate(families):
+        if not isinstance(family, dict):
+            continue
+        name = str(family.get("name", f"Family {idx + 1}")).strip() or f"Family {idx + 1}"
+        fam_body = dict(body)
+        fam_body["base_state"] = family.get("base_state", {})
+        result = _compute_gg_static_map(calibrated_json_data, fam_body, mode="relaxed" if family_mode == "relaxed" else "frozen")
+        runs.append({"name": name, "base_state": fam_body["base_state"], "result": result})
+
+    if not runs:
+        raise ValueError("No valid family entries were provided.")
+    return {"family_mode": family_mode, "families": runs}
 
 
 def _norm_constraint_kind(kind: str) -> str:
@@ -1392,6 +2153,18 @@ def health():
     })
 
 
+@app.route("/api/calibration_models")
+def calibration_models():
+    try:
+        models = sorted([str(k) for k in VEHICLE_REGISTRY.keys()]) if isinstance(VEHICLE_REGISTRY, dict) and VEHICLE_REGISTRY else []
+        if not models:
+            models = list(_CALIBRATION_MODEL_FALLBACK)
+        default_model = "F2_2026" if "F2_2026" in models else models[0]
+        return jsonify({"status": "success", "models": models, "default_model": default_model})
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
 @app.route("/api/load_upload", methods=["POST"])
 def load_upload():
     try:
@@ -1515,6 +2288,90 @@ def export_optimize_csv():
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+def _gg_rows_to_csv(rows: List[Dict[str, Any]]) -> str:
+    if not rows:
+        return ""
+    keys: List[str] = []
+    for r in rows:
+        for k in r.keys():
+            if k not in keys:
+                keys.append(k)
+    io_csv = io.StringIO()
+    io_csv.write(",".join(keys) + "\n")
+    for r in rows:
+        vals: List[str] = []
+        for k in keys:
+            v = r.get(k)
+            text = "" if v is None else str(v)
+            if ("," in text) or ('"' in text) or ("\n" in text):
+                text = '"' + text.replace('"', '""') + '"'
+            vals.append(text)
+        io_csv.write(",".join(vals) + "\n")
+    return io_csv.getvalue()
+
+
+@app.route("/api/gg/frozen", methods=["POST"])
+def gg_frozen():
+    try:
+        body = request.get_json(force=True) or {}
+        json_data = body.get("json_data") if isinstance(body.get("json_data"), dict) else _state.get("json_data")
+        if not isinstance(json_data, dict):
+            return jsonify({"status": "error", "message": "No JSON loaded"}), 400
+
+        base = _get_or_build_gg_base_geometry(json_data, body)
+        calibrated = base.get("calibrated_json_data")
+        if not isinstance(calibrated, dict):
+            raise ValueError("Could not build calibrated geometry.")
+
+        result = _compute_gg_static_map(calibrated_json_data=calibrated, body=body, mode="frozen")
+        result["calibration"] = _json_clean(base.get("metadata", {}))
+        result["csv"] = _gg_rows_to_csv(result.get("rows", []))
+        return jsonify({"status": "success", "data": _json_clean(result)})
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
+@app.route("/api/gg/relaxed", methods=["POST"])
+def gg_relaxed():
+    try:
+        body = request.get_json(force=True) or {}
+        json_data = body.get("json_data") if isinstance(body.get("json_data"), dict) else _state.get("json_data")
+        if not isinstance(json_data, dict):
+            return jsonify({"status": "error", "message": "No JSON loaded"}), 400
+
+        base = _get_or_build_gg_base_geometry(json_data, body)
+        calibrated = base.get("calibrated_json_data")
+        if not isinstance(calibrated, dict):
+            raise ValueError("Could not build calibrated geometry.")
+
+        result = _compute_gg_static_map(calibrated_json_data=calibrated, body=body, mode="relaxed")
+        result["calibration"] = _json_clean(base.get("metadata", {}))
+        result["csv"] = _gg_rows_to_csv(result.get("rows", []))
+        return jsonify({"status": "success", "data": _json_clean(result)})
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
+@app.route("/api/gg/families", methods=["POST"])
+def gg_families():
+    try:
+        body = request.get_json(force=True) or {}
+        json_data = body.get("json_data") if isinstance(body.get("json_data"), dict) else _state.get("json_data")
+        if not isinstance(json_data, dict):
+            return jsonify({"status": "error", "message": "No JSON loaded"}), 400
+
+        base = _get_or_build_gg_base_geometry(json_data, body)
+        calibrated = base.get("calibrated_json_data")
+        if not isinstance(calibrated, dict):
+            raise ValueError("Could not build calibrated geometry.")
+
+        result = _compute_gg_state_families(calibrated_json_data=calibrated, body=body)
+        result["calibration"] = _json_clean(base.get("metadata", {}))
+        return jsonify({"status": "success", "data": _json_clean(result)})
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 500
 
 
 @app.route("/api/setup_overview")
