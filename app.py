@@ -745,12 +745,14 @@ def _compute_operating_point(json_data: dict, params: dict, _static_ref: dict = 
     if abs(zrl) < 1e-9 and abs(zrr) < 1e-9 and abs(rr_eq) > 1e-9:
         zrl, zrr = hr + 0.5 * rr_eq, hr - 0.5 * rr_eq
 
-    hRideF_mm = 0.5 * (base_front_rh_mm + zfl + base_front_rh_mm + zfr)
-    hRideR_mm = 0.5 * (base_rear_rh_mm + zrl + base_rear_rh_mm + zrr)
+    hRideF_mm = float(analysis.get("front_ride_height", np.nan))
+    hRideR_mm = float(analysis.get("rear_ride_height", np.nan))
+    if not np.isfinite(hRideF_mm) or not np.isfinite(hRideR_mm):
+        hRideF_mm = 0.5 * (base_front_rh_mm + zfl + base_front_rh_mm + zfr)
+        hRideR_mm = 0.5 * (base_rear_rh_mm + zrl + base_rear_rh_mm + zrr)
     h_cg_now_mm = float(analysis.get("h_cg_mm", base_h_cg_mm))
-    body_heave_corr_mm = h_cg_now_mm - base_h_cg_mm
-    hRideF_m = (hRideF_mm + body_heave_corr_mm) / 1000.0
-    hRideR_m = (hRideR_mm + body_heave_corr_mm) / 1000.0
+    hRideF_m = hRideF_mm / 1000.0
+    hRideR_m = hRideR_mm / 1000.0
 
     variables = {
         "hRideF": hRideF_m, "hRideR": hRideR_m,
