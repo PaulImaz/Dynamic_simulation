@@ -1093,6 +1093,22 @@
           </div>
           <span class="entry-arrow-wrap"><span class="entry-arrow" aria-hidden="true">&rarr;</span></span>
         </button>
+        <button class="entry-card" id="goPlatformExplorer">
+          <div>
+            <div class="entry-head">
+              <span class="entry-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M4 16h16"></path>
+                  <path d="M7 16l2-8h6l2 8"></path>
+                  <path d="M12 8V4"></path>
+                </svg>
+              </span>
+              <h3>Platform State Explorer</h3>
+            </div>
+            <p>Study platform motion from elastic response only using ax, ay, speed, DRS and fuel sweeps.</p>
+          </div>
+          <span class="entry-arrow-wrap"><span class="entry-arrow" aria-hidden="true">&rarr;</span></span>
+        </button>
       </div>
     </section>
 
@@ -1748,6 +1764,124 @@
       </div>
     </section>
 
+    <section id="platform-view" style="display:none;">
+      <div class="view-head">
+        <h2>Platform State Explorer</h2>
+      </div>
+      <div class="grid">
+        <section class="panel">
+          <h2>1) Load Setup JSON</h2>
+          <input id="plat_jsonFile" type="file" accept=".json" style="display:none;" />
+          <div class="file-actions">
+            <button id="plat_btnStageFile" class="file-pill-btn file-pill-muted" disabled>
+              <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 21V4"></path>
+                <path d="M5 5h10l-2 3 2 3H5z"></path>
+              </svg>
+              <span>Stage Car</span>
+            </button>
+            <button id="plat_btnLoadCar" class="file-pill-btn file-pill-bright">
+              <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 21V8"></path>
+                <path d="M7.5 12.5L12 8l4.5 4.5"></path>
+                <path d="M4 21h16"></path>
+              </svg>
+              <span>Load Car</span>
+            </button>
+            <button id="plat_btnViewSetup" class="file-pill-btn file-pill-muted" disabled>
+              <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"></path>
+              </svg>
+              <span>View Setup</span>
+            </button>
+          </div>
+          <p id="plat_fileName" class="muted" style="margin-top:6px;">No file selected.</p>
+          <p id="plat_loadStatus" class="muted">No JSON loaded.</p>
+
+          <h2 style="margin-top:14px;">2) Point Inputs</h2>
+          <div class="chart-card">
+            <div class="row">
+              <div><label>Calibration model</label><select id="plat_model_id"><option value="F2_2026">F2_2026</option></select></div>
+              <div><label>DRS</label><select id="plat_drs_on"><option value="false">Off</option><option value="true">On</option></select></div>
+            </div>
+            <div class="row">
+              <div><label>ax_g</label><input id="plat_ax_g" type="number" value="0.0" step="0.05"></div>
+              <div><label>ay_g</label><input id="plat_ay_g" type="number" value="0.0" step="0.05"></div>
+            </div>
+            <div class="row">
+              <div><label>speed_kph</label><input id="plat_speed_kph" type="number" value="180.0" step="1"></div>
+              <div><label>fuel_mass_kg</label><input id="plat_fuel_mass_kg" type="number" value="20.0" step="0.5" min="0"></div>
+            </div>
+          </div>
+
+          <h2 style="margin-top:14px;">3) Sweep Builder</h2>
+          <div class="chart-card">
+            <div class="row">
+              <div>
+                <label>X variable</label>
+                <select id="plat_x_variable">
+                  <option value="ax_g">ax_g</option>
+                  <option value="ay_g">ay_g</option>
+                  <option value="speed_kph" selected>speed_kph</option>
+                  <option value="fuel_mass_kg">fuel_mass_kg</option>
+                  <option value="drs_on">drs_on</option>
+                </select>
+              </div>
+              <div>
+                <label>Y variable (optional)</label>
+                <select id="plat_y_variable">
+                  <option value="">(none)</option>
+                  <option value="ax_g">ax_g</option>
+                  <option value="ay_g">ay_g</option>
+                  <option value="speed_kph">speed_kph</option>
+                  <option value="fuel_mass_kg">fuel_mass_kg</option>
+                  <option value="drs_on">drs_on</option>
+                </select>
+              </div>
+            </div>
+            <div class="row">
+              <div><label>X min</label><input id="plat_x_min" type="number" value="100.0" step="0.1"></div>
+              <div><label>X max</label><input id="plat_x_max" type="number" value="300.0" step="0.1"></div>
+            </div>
+            <div class="row">
+              <div><label>X step</label><input id="plat_x_step" type="number" value="10.0" step="0.1"></div>
+              <div class="muted" style="padding-top:22px;">For <code>drs_on</code> axis, values are discrete: 0/1.</div>
+            </div>
+            <div class="row">
+              <div><label>Y min</label><input id="plat_y_min" type="number" value="0.0" step="0.1"></div>
+              <div><label>Y max</label><input id="plat_y_max" type="number" value="4.0" step="0.1"></div>
+            </div>
+            <div class="row">
+              <div><label>Y step</label><input id="plat_y_step" type="number" value="0.2" step="0.1"></div>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px;">
+            <div><button id="plat_run_btn">Run Platform Explorer</button></div>
+          </div>
+          <p id="plat_status" class="muted">Load a setup and run the explorer.</p>
+        </section>
+
+        <section class="panel">
+          <h2>Results</h2>
+          <div id="plat_summary" class="muted" style="margin-bottom:10px;">No run yet.</div>
+          <div class="row" style="margin-bottom:8px;">
+            <div>
+              <label>Variable to visualize</label>
+              <select id="plat_metric_select"></select>
+            </div>
+          </div>
+          <div class="sim-chart-container sim-chart-container--tall" id="plat_plot_main"></div>
+          <div class="chart-card" style="margin-top:10px;">
+            <h3 style="margin:0 0 8px;">Point Inspector</h3>
+            <pre id="plat_point_inspector" style="margin:0;max-height:260px;overflow:auto;background:#f7f9fc;border:1px solid #d9e1ec;border-radius:10px;padding:10px;font-size:12px;">Click a point/cell in the chart.</pre>
+          </div>
+          <div id="plat_table_wrap" style="overflow:auto;max-height:320px;margin-top:10px;"></div>
+        </section>
+      </div>
+    </section>
+
     <section id="sensitivity-view" style="display:none;">
       <div class="view-head">
         <h2>Sensitivity Analysis</h2>
@@ -2214,11 +2348,19 @@
     </div>
   </div>
 
+  <div id="platform_loading_modal" class="report-modal" aria-hidden="true">
+    <div class="panel-loading-box" style="min-width:320px;max-width:560px;">
+      <span class="panel-loading-spinner" aria-hidden="true"></span>
+      <span>Computing Platform Explorer... Please wait.</span>
+    </div>
+  </div>
+
   <script>
     const DynStore = { rows: [], csv: "", speedMode: "single", speedValues: [], lastData: null };
     const SensStore = { jsonData: null, csv: "", lastData: null, hasData: false };
     const OptStore = { result: null, globalCandidates: [], topCandidates: [], hasData: false, jsonData: null };
     const GGStore = { jsonData: null, mode: "rigid_setup", csv: "", result: null };
+    const PlatformStore = { jsonData: null, lastData: null, lastRows: [], metric: "body_heave_mm", hasData: false };
     const CompareStore = {
       pendingFiles: [],
       setups: [],
@@ -3927,18 +4069,28 @@
       overlay.setAttribute("aria-hidden", isBusy ? "false" : "true");
     }
 
+    function platformSetBusy(isBusy) {
+      const modal = $("platform_loading_modal");
+      if (!modal) return;
+      modal.classList.toggle("open", !!isBusy);
+      modal.setAttribute("aria-hidden", isBusy ? "false" : "true");
+    }
+
     async function ggPopulateCalibrationModels() {
-      const select = $("gg_model_id");
-      if (!select) return;
+      const selectIds = ["gg_model_id", "plat_model_id"];
       try {
         const res = await fetch("/api/calibration_models");
         const json = await res.json();
         if (json.status !== "success") return;
         const models = Array.isArray(json.models) ? json.models : [];
         if (!models.length) return;
-        select.innerHTML = models.map((m) => `<option value="${m}">${m}</option>`).join("");
         const def = json.default_model || models[0];
-        if (models.includes(def)) select.value = def;
+        selectIds.forEach((id) => {
+          const sel = $(id);
+          if (!sel) return;
+          sel.innerHTML = models.map((m) => `<option value="${m}">${m}</option>`).join("");
+          if (models.includes(def)) sel.value = def;
+        });
       } catch (err) {
         // Keep default option on network/backend error.
       }
@@ -4108,12 +4260,196 @@
         : "Calibration not applied.";
     }
 
+    function platBuildPayload() {
+      const yVar = $("plat_y_variable").value || "";
+      const payload = {
+        json_data: PlatformStore.jsonData || undefined,
+        model_id: ($("plat_model_id").value || "").trim() || undefined,
+        drs_on: $("plat_drs_on").value === "true",
+        fixed_inputs: {
+          ax_g: Number($("plat_ax_g").value || 0),
+          ay_g: Number($("plat_ay_g").value || 0),
+          speed_kph: Number($("plat_speed_kph").value || 180),
+          fuel_mass_kg: Number($("plat_fuel_mass_kg").value || 0),
+        },
+        sweep: {
+          x_variable: $("plat_x_variable").value || "speed_kph",
+          x_min: Number($("plat_x_min").value || 0),
+          x_max: Number($("plat_x_max").value || 0),
+          x_step: Number($("plat_x_step").value || 1),
+        }
+      };
+      if (yVar) {
+        payload.sweep.y_variable = yVar;
+        payload.sweep.y_min = Number($("plat_y_min").value || 0);
+        payload.sweep.y_max = Number($("plat_y_max").value || 0);
+        payload.sweep.y_step = Number($("plat_y_step").value || 1);
+      }
+      return payload;
+    }
+
+    function platSetMetricOptions(fields, preferred) {
+      const arr = Array.isArray(fields) ? fields : [];
+      const select = $("plat_metric_select");
+      if (!select) return;
+      select.innerHTML = arr.map((m) => `<option value="${m}">${m}</option>`).join("");
+      if (arr.includes(preferred)) select.value = preferred;
+      else if (arr.length) select.value = arr[0];
+      PlatformStore.metric = select.value || preferred || "";
+    }
+
+    function platRenderTable(rows) {
+      const arr = Array.isArray(rows) ? rows : [];
+      const head = `
+        <table><thead><tr>
+          <th>ax_g</th><th>ay_g</th><th>speed</th><th>fuel</th><th>drs</th>
+          <th>heave [mm]</th><th>pitch [deg]</th><th>roll [deg]</th><th>hRideF [mm]</th><th>hRideR [mm]</th>
+        </tr></thead><tbody>
+      `;
+      const body = arr.slice(0, 600).map((r) => `
+        <tr>
+          <td>${fmt(r.ax_g,2)}</td><td>${fmt(r.ay_g,2)}</td><td>${fmt(r.speed_kph,1)}</td><td>${fmt(r.fuel_mass_kg,1)}</td><td>${r.drs_on ? "on" : "off"}</td>
+          <td>${fmt(r.body_heave_mm,2)}</td><td>${fmt(r.body_pitch_deg,3)}</td><td>${fmt(r.body_roll_deg,3)}</td><td>${fmt(r.hRideF_mm,2)}</td><td>${fmt(r.hRideR_mm,2)}</td>
+        </tr>
+      `).join("");
+      $("plat_table_wrap").innerHTML = head + body + "</tbody></table>";
+    }
+
+    function platSetInspector(row) {
+      if (!row || typeof row !== "object") {
+        $("plat_point_inspector").textContent = "Point not found.";
+        return;
+      }
+      $("plat_point_inspector").textContent = JSON.stringify(row, null, 2);
+    }
+
+    function platFindRowByXY(rows, x, y, hasY) {
+      const arr = Array.isArray(rows) ? rows : [];
+      if (!arr.length) return null;
+      let best = null;
+      let bestErr = Infinity;
+      arr.forEach((r) => {
+        const dx = Math.abs(Number(r.x_value || 0) - Number(x || 0));
+        const dy = hasY ? Math.abs(Number(r.y_value || 0) - Number(y || 0)) : 0;
+        const err = dx + dy;
+        if (err < bestErr) {
+          bestErr = err;
+          best = r;
+        }
+      });
+      return best;
+    }
+
+    function platRenderPlot() {
+      const data = PlatformStore.lastData || {};
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      const sweep = data.sweep || {};
+      const metric = $("plat_metric_select").value || PlatformStore.metric || "body_heave_mm";
+      PlatformStore.metric = metric;
+      if (!rows.length) {
+        Plotly.react("plat_plot_main", [], { title: "No data" }, { responsive: true });
+        return;
+      }
+      if (sweep.is_2d) {
+        const xs = Array.isArray(sweep.x_values) ? sweep.x_values : [];
+        const ys = Array.isArray(sweep.y_values) ? sweep.y_values : [];
+        const z = ys.map((yv) => xs.map((xv) => {
+          const row = platFindRowByXY(rows, xv, yv, true);
+          const val = Number(row?.[metric]);
+          return Number.isFinite(val) ? val : null;
+        }));
+        Plotly.react("plat_plot_main", [{
+          type: "surface",
+          x: xs,
+          y: ys,
+          z,
+          colorscale: "Viridis",
+          showscale: true,
+          contours: {
+            z: {
+              show: true,
+              usecolormap: true,
+              highlightcolor: "#274d79",
+              project: { z: true }
+            }
+          },
+          hovertemplate: `${sweep.x_variable}: %{x}<br>${sweep.y_variable}: %{y}<br>${metric}: %{z}<extra></extra>`
+        }], {
+          title: `Platform Explorer 3D Surface | ${metric}`,
+          scene: {
+            xaxis: { title: sweep.x_variable, automargin: true, gridcolor: "#e5e8ef" },
+            yaxis: { title: sweep.y_variable, automargin: true, gridcolor: "#e5e8ef" },
+            zaxis: { title: metric, automargin: true, gridcolor: "#e5e8ef" },
+            camera: { eye: { x: 1.45, y: 1.35, z: 0.9 } }
+          },
+          margin: { t: 52, r: 18, b: 10, l: 10 }
+        }, { responsive: true });
+        const chart = $("plat_plot_main");
+        if (typeof chart.removeAllListeners === "function") chart.removeAllListeners("plotly_click");
+        chart.on("plotly_click", (ev) => {
+          const p = ev?.points?.[0];
+          if (!p) return;
+          const row = platFindRowByXY(rows, p.x, p.y, true);
+          platSetInspector(row);
+        });
+      } else {
+        const trace = rows.map((r, idx) => ({
+          x: Number(r.x_value),
+          y: Number(r[metric]),
+          idx
+        })).filter((v) => Number.isFinite(v.x) && Number.isFinite(v.y));
+        Plotly.react("plat_plot_main", [{
+          type: "scatter",
+          mode: "lines+markers",
+          x: trace.map((p) => p.x),
+          y: trace.map((p) => p.y),
+          customdata: trace.map((p) => p.idx),
+          marker: { size: 6, color: "#1d5fa5" },
+          line: { width: 2, color: "#1d5fa5" },
+          hovertemplate: `${sweep.x_variable}: %{x}<br>${metric}: %{y}<extra></extra>`
+        }], {
+          title: `Platform Explorer Curve | ${metric}`,
+          xaxis: { title: sweep.x_variable, automargin: true },
+          yaxis: { title: metric, automargin: true },
+          margin: { t: 48, r: 22, b: 60, l: 86 }
+        }, { responsive: true });
+        const chart = $("plat_plot_main");
+        if (typeof chart.removeAllListeners === "function") chart.removeAllListeners("plotly_click");
+        chart.on("plotly_click", (ev) => {
+          const p = ev?.points?.[0];
+          if (!p) return;
+          const idx = Number(p.customdata);
+          platSetInspector(rows[idx] || null);
+        });
+      }
+    }
+
+    function platRenderResult(data) {
+      PlatformStore.lastData = data || {};
+      PlatformStore.lastRows = Array.isArray(data?.rows) ? data.rows : [];
+      PlatformStore.hasData = PlatformStore.lastRows.length > 0;
+      platSetMetricOptions(data.available_visual_fields || [], data.default_visual_field || "body_heave_mm");
+      platRenderPlot();
+      platRenderTable(PlatformStore.lastRows);
+      const sum = data.summary || {};
+      const sw = data.sweep || {};
+      const cal = data.calibration || {};
+      const msg = [
+        `${sum.converged_points || 0}/${sum.total_points || 0} converged`,
+        `grid: ${sw.x_variable || "-"}${sw.is_2d ? ` x ${sw.y_variable}` : ""}`,
+        cal.calibration_applied ? `calibrated: ${cal.calibration_model_id || "-"}` : "calibration not applied"
+      ].join(" | ");
+      $("plat_summary").textContent = msg;
+      platSetInspector(PlatformStore.lastRows[0] || null);
+    }
+
     function showView(view) {
       $("entry-view").style.display = view === "entry" ? "" : "none";
       $("calculator-view").style.display = view === "calculator" ? "" : "none";
       $("compare-view").style.display = view === "compare" ? "" : "none";
       $("compare-results-view").style.display = view === "compare-results" ? "" : "none";
       $("gg-view").style.display = view === "gg" ? "" : "none";
+      $("platform-view").style.display = view === "platform" ? "" : "none";
       $("sensitivity-view").style.display = view === "sensitivity" ? "" : "none";
       $("optimization-view").style.display = view === "optimization" ? "" : "none";
       if (view === "calculator") customRefreshBuilder("dyn");
@@ -4266,6 +4602,79 @@
     $("goCompareResults").addEventListener("click", () => showView("compare-results"));
     $("goGG").addEventListener("click", () => showView("gg"));
     $("goSensitivity").addEventListener("click", () => showView("sensitivity"));
+    $("goPlatformExplorer").addEventListener("click", () => showView("platform"));
+
+    $("plat_btnLoadCar").addEventListener("click", () => $("plat_jsonFile").click());
+    $("plat_jsonFile").addEventListener("change", () => {
+      const file = $("plat_jsonFile").files[0];
+      $("plat_fileName").textContent = file ? `Selected: ${file.name}` : "No file selected.";
+      $("plat_btnStageFile").disabled = !file;
+      $("plat_btnStageFile").classList.toggle("is-ready", !!file);
+      $("plat_btnViewSetup").disabled = true;
+      $("plat_btnViewSetup").classList.remove("is-ready");
+      PlatformStore.jsonData = null;
+    });
+    $("plat_btnStageFile").addEventListener("click", async () => {
+      const file = $("plat_jsonFile").files[0];
+      if (!file) return;
+      $("plat_loadStatus").textContent = "Staging file...";
+      try {
+        const text = await file.text();
+        PlatformStore.jsonData = JSON.parse(text);
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch("/api/load_upload", { method: "POST", body: fd });
+        const json = await res.json();
+        if (json.status === "success") {
+          $("plat_loadStatus").textContent = "JSON loaded successfully.";
+          $("plat_btnViewSetup").disabled = false;
+          $("plat_btnViewSetup").classList.add("is-ready");
+        } else {
+          $("plat_loadStatus").textContent = "Error: " + (json.message || "unknown");
+          PlatformStore.jsonData = null;
+        }
+      } catch (err) {
+        PlatformStore.jsonData = null;
+        $("plat_btnViewSetup").disabled = true;
+        $("plat_btnViewSetup").classList.remove("is-ready");
+        $("plat_loadStatus").textContent = "Error: could not parse JSON.";
+      } finally {
+        $("plat_btnStageFile").classList.remove("is-ready");
+      }
+    });
+    $("plat_btnViewSetup").addEventListener("click", openSetupViewer);
+    $("plat_metric_select").addEventListener("change", () => {
+      if (!PlatformStore.hasData) return;
+      platRenderPlot();
+    });
+    $("plat_run_btn").addEventListener("click", async () => {
+      if (!PlatformStore.jsonData) {
+        $("plat_status").textContent = "Please load and stage a setup JSON first.";
+        return;
+      }
+      $("plat_status").textContent = "Running platform explorer...";
+      $("plat_run_btn").disabled = true;
+      platformSetBusy(true);
+      try {
+        const res = await fetch("/api/platform_explorer/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(platBuildPayload()),
+        });
+        const json = await res.json();
+        if (json.status !== "success") {
+          $("plat_status").textContent = "Error: " + (json.message || "unknown");
+          return;
+        }
+        platRenderResult(json.data || {});
+        $("plat_status").textContent = "Platform explorer completed.";
+      } catch (err) {
+        $("plat_status").textContent = "Network error: " + (err?.message || "unknown");
+      } finally {
+        platformSetBusy(false);
+        $("plat_run_btn").disabled = false;
+      }
+    });
 
     $("gg_btnLoadCar").addEventListener("click", () => $("gg_jsonFile").click());
     $("gg_jsonFile").addEventListener("change", () => {
@@ -4654,6 +5063,24 @@
     customRefreshBuilder("cmpres");
     customRefreshBuilder("opt");
     ggPopulateCalibrationModels();
+    platSetMetricOptions([
+      "front_platform_travel_mm",
+      "rear_platform_travel_mm",
+      "body_heave_mm",
+      "body_heave_compression_mm",
+      "body_pitch_deg",
+      "body_roll_deg",
+      "hRideF_mm",
+      "hRideR_mm",
+      "aero_balance_front_pct",
+      "drag_force_n",
+      "front_aero_load_n",
+      "rear_aero_load_n",
+      "cg_z_mm",
+      "roll_axis_height_at_cg_mm",
+      "elastic_roll_distribution_front_pct",
+      "lltd_total_front_pct"
+    ], "body_heave_mm");
     ggApplyDriveLayoutDefaults();
     optPopulateObjectiveSelect();
     optToggleTarget();
