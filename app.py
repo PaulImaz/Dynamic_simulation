@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, make_response, render_template, request
 from body_attitude import build_body_reference_from_json, compute_body_attitude_summary
 from center_map_tool_v5 import SuspensionGeometryExact
 from dynamic_optimization import (
@@ -25,7 +25,17 @@ from dynamic_optimization import (
     json_safe,
     run_optimization,
 )
-from upright_solver import solve_upright_for_zw
+from upright_solver import (
+    UprightKinematicsInput,
+    compute_lower_wishbone_local_offset,
+    solve_upright_for_zw,
+)
+try:
+    from motion_ratio_tool import run_motion_ratio as _run_motion_ratio_tool
+    _MOTION_RATIO_TOOL_AVAILABLE = True
+except Exception:
+    _run_motion_ratio_tool = None  # type: ignore[assignment]
+    _MOTION_RATIO_TOOL_AVAILABLE = False
 
 try:
     from calibrator import calibrate as calibrate_geometry, write_calibrated_json
@@ -58,6 +68,7 @@ _state: Dict[str, object] = {
     "center_state_cache": {},
     "json_signature_cache": {},
     "windows_perf_tuning": {},
+    "platform_mr_curve_cache": {},
 }
 
 
@@ -183,6 +194,239 @@ def _dynamic_range(start: float, end: float, step: float) -> List[float]:
         if n > 50000:
             raise ValueError("Range is too large.")
     return values
+
+
+def _mr_norm(v: np.ndarray) -> float:
+    return float(np.linalg.norm(v))
+
+
+def _mr_unit(v: np.ndarray) -> np.ndarray:
+    n = _mr_norm(v)
+    if n < 1e-15:
+        raise ValueError("MR unit vector with near-zero norm.")
+    return v / n
+
+
+def _mr_as_point_m(value: Any) -> np.ndarray:
+    arr = np.asarray(value, dtype=float).reshape(3)
+    if float(np.max(np.abs(arr))) > 20.0:
+        arr = arr * 1e-3
+    return arr
+
+
+def _mr_rotate_point_about_axis_rodrigues(x0: np.ndarray, o: np.ndarray, k_hat: np.ndarray, omega: float) -> np.ndarray:
+    r = x0 - o
+    c = math.cos(float(omega))
+    s = math.sin(float(omega))
+    r_rot = r * c + np.cross(k_hat, r) * s + k_hat * (float(np.dot(k_hat, r)) * (1.0 - c))
+    return o + r_rot
+
+
+def _mr_point_on_rocker(local_point_0: np.ndarray, axis_point: np.ndarray, k_hat: np.ndarray, omega: float) -> np.ndarray:
+    return _mr_rotate_point_about_axis_rodrigues(local_point_0, axis_point, k_hat, omega)
+
+
+def _mr_pushrod_length_error(
+    omega: float,
+    pu: np.ndarray,
+    pb0: np.ndarray,
+    axis_point: np.ndarray,
+    k_hat: np.ndarray,
+    lp: float,
+) -> float:
+    pb = _mr_point_on_rocker(pb0, axis_point, k_hat, omega)
+    return _mr_norm(pu - pb) - lp
+
+
+def _mr_wrap_near(target: float, angle: float) -> float:
+    two_pi = 2.0 * math.pi
+    return angle + two_pi * round((target - angle) / two_pi)
+
+
+def _mr_solve_omega_analytic(
+    pu: np.ndarray,
+    pb0: np.ndarray,
+    axis_point: np.ndarray,
+    axis_dir: np.ndarray,
+    lp: float,
+    omega_guess: float,
+    pu_prev: Optional[np.ndarray],
+    omega_prev: Optional[float],
+) -> float:
+    k_hat = _mr_unit(axis_dir)
+    o = axis_point
+    w = pb0 - o
+    c = o + k_hat * float(np.dot(k_hat, w))
+    r = _mr_norm(pb0 - c)
+    if r < 1e-12:
+        return float(omega_guess)
+
+    u = pu - c
+    a = float(np.dot(u, (pb0 - c) / max(r, 1e-12)))
+    e1 = (pb0 - c) / max(r, 1e-12)
+    e2 = _mr_unit(np.cross(k_hat, e1))
+    b = float(np.dot(u, e2))
+    r_u = math.sqrt(a * a + b * b)
+    if r_u < 1e-12:
+        return float(omega_guess)
+
+    s = (_mr_norm(u) ** 2 + r ** 2 - lp ** 2) / (2.0 * r)
+    x = max(-1.0, min(1.0, s / r_u))
+    phi = math.atan2(b, a)
+    delta = math.acos(x)
+    o1 = _mr_wrap_near(float(omega_guess), phi + delta)
+    o2 = _mr_wrap_near(float(omega_guess), phi - delta)
+
+    f1 = abs(_mr_pushrod_length_error(o1, pu, pb0, o, k_hat, lp))
+    f2 = abs(_mr_pushrod_length_error(o2, pu, pb0, o, k_hat, lp))
+    c1 = abs(o1 - float(omega_guess))
+    c2 = abs(o2 - float(omega_guess))
+
+    if (pu_prev is not None) and (omega_prev is not None):
+        dp = np.asarray(pu, dtype=float) - np.asarray(pu_prev, dtype=float)
+        qw_prev = _mr_point_on_rocker(pb0, o, k_hat, float(omega_prev))
+        tangent_prev = np.cross(k_hat, qw_prev - o)
+        sign_metric = float(np.dot(dp, tangent_prev))
+        if abs(sign_metric) > 1e-12:
+            expected = math.copysign(1.0, sign_metric)
+            d1 = float(o1 - omega_prev)
+            d2 = float(o2 - omega_prev)
+            s1 = 0.0 if abs(d1) < 1e-12 else math.copysign(1.0, d1)
+            s2 = 0.0 if abs(d2) < 1e-12 else math.copysign(1.0, d2)
+            ok1 = (s1 == 0.0) or (s1 == expected)
+            ok2 = (s2 == 0.0) or (s2 == expected)
+            if ok1 != ok2:
+                return float(o1 if ok1 else o2)
+
+    if abs(f1 - f2) > 1e-6:
+        return float(o1 if f1 < f2 else o2)
+    return float(o1 if c1 <= c2 else o2)
+
+
+def _mr_compute_discrete_derivative(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = int(len(y))
+    dydx = np.full(n, np.nan, dtype=float)
+    if n < 2:
+        return dydx
+    if n == 2:
+        dx = x[1] - x[0]
+        if abs(dx) > 1e-15:
+            dydx[:] = (y[1] - y[0]) / dx
+        return dydx
+    dx0 = x[1] - x[0]
+    dx1 = x[-1] - x[-2]
+    if abs(dx0) > 1e-15:
+        dydx[0] = (y[1] - y[0]) / dx0
+    if abs(dx1) > 1e-15:
+        dydx[-1] = (y[-1] - y[-2]) / dx1
+    for i in range(1, n - 1):
+        dxi = x[i + 1] - x[i - 1]
+        if abs(dxi) > 1e-15:
+            dydx[i] = (y[i + 1] - y[i - 1]) / dxi
+    return dydx
+
+
+def _mr_infer_pushrod_wheel_body(name: str) -> str:
+    lower = str(name).strip().lower()
+    if ("pushrod on upright" in lower) or ("upright" in lower):
+        return "upright"
+    if ("lower wishbone" in lower) or ("lower_wishbone" in lower):
+        return "lower_wishbone"
+    return "upright"
+
+
+def _mr_build_curves_for_json(calibrated_json_data: Dict[str, Any], zmin_mm: float = -80.0, zmax_mm: float = 80.0, step_mm: float = 2.0) -> Dict[str, Any]:
+    if (not _MOTION_RATIO_TOOL_AVAILABLE) or (_run_motion_ratio_tool is None):
+        raise RuntimeError("motion_ratio_tool.py is not available.")
+
+    mr_results = _run_motion_ratio_tool(
+        calibrated_json_data,
+        zmin_mm=float(zmin_mm),
+        zmax_mm=float(zmax_mm),
+        step_mm=float(step_mm if abs(float(step_mm)) > 1e-9 else 2.0),
+        poly_degree=3,
+    )
+
+    def _curve(axle: str) -> Dict[str, Any]:
+        res = mr_results.get(axle, {}) if isinstance(mr_results.get(axle), dict) else {}
+        df = res.get("df")
+        summary = res.get("summary", {}) if isinstance(res.get("summary"), dict) else {}
+        parsed = res.get("parsed", {}) if isinstance(res.get("parsed"), dict) else {}
+        if df is None:
+            raise RuntimeError(f"motion_ratio_tool did not return dataframe for axle={axle}")
+        zw = np.asarray(df.get("zw_mm", []), dtype=float)
+        mr_dzw_ds = np.asarray(df.get("MR_dzw_ds", []), dtype=float)
+        valid = np.isfinite(zw) & np.isfinite(mr_dzw_ds)
+        if int(np.count_nonzero(valid)) < 2:
+            raise RuntimeError(f"motion_ratio_tool returned invalid MR data for axle={axle}")
+        zw_valid = np.asarray(zw[valid], dtype=float)
+        mr_valid = np.asarray(mr_dzw_ds[valid], dtype=float)
+        coeffs = summary.get("poly_coefficients_high_to_low", [])
+        coeffs = [float(c) for c in coeffs] if isinstance(coeffs, (list, tuple)) else []
+        return {
+            "zw_mm": zw_valid,
+            "mr_dzw_ds": mr_valid,
+            "poly_coefficients_high_to_low": coeffs,
+            "poly_zw_domain_m": [
+                float(summary.get("zw_min_m", np.nan)),
+                float(summary.get("zw_max_m", np.nan)),
+            ],
+            "fallback_mr_wd": float(_safe_float(parsed.get("fallback_mr_wd", 1.0), 1.0)),
+            "source": "motion_ratio_tool_polyfit",
+        }
+
+    return {"front": _curve("front"), "rear": _curve("rear")}
+
+
+def _get_or_build_platform_mr_curves(calibrated_json_data: Dict[str, Any], force_rebuild: bool = False) -> Optional[Dict[str, Any]]:
+    if not isinstance(calibrated_json_data, dict):
+        return None
+    signature = _json_signature_cached(calibrated_json_data)
+    cache = _state.get("platform_mr_curve_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        _state["platform_mr_curve_cache"] = cache
+    if (not force_rebuild) and isinstance(cache.get(signature), dict):
+        return cache.get(signature)
+    try:
+        curves = _mr_build_curves_for_json(calibrated_json_data, zmin_mm=-80.0, zmax_mm=80.0, step_mm=2.0)
+        if len(cache) > 24:
+            cache.clear()
+        cache[signature] = curves
+        return curves
+    except Exception:
+        return None
+
+
+def _interp_platform_mr_dzw_ds(curve_entry: Optional[Dict[str, Any]], zw_mm: float, fallback_mr: float) -> float:
+    fb = float(fallback_mr) if np.isfinite(float(fallback_mr)) and abs(float(fallback_mr)) > 1e-12 else 1.0
+    if not isinstance(curve_entry, dict):
+        return fb
+    coeffs = curve_entry.get("poly_coefficients_high_to_low", [])
+    domain = curve_entry.get("poly_zw_domain_m", [])
+    if isinstance(coeffs, (list, tuple)) and len(coeffs) >= 2 and isinstance(domain, (list, tuple)) and len(domain) >= 2:
+        try:
+            zmin_m = float(domain[0])
+            zmax_m = float(domain[1])
+            if np.isfinite(zmin_m) and np.isfinite(zmax_m):
+                zw_m = float(np.clip(float(zw_mm) * 1e-3, min(zmin_m, zmax_m), max(zmin_m, zmax_m)))
+                mr_poly = float(np.polyval(np.asarray(coeffs, dtype=float), zw_m))
+                if np.isfinite(mr_poly) and abs(mr_poly) > 1e-12:
+                    return mr_poly
+        except Exception:
+            pass
+    zw = np.asarray(curve_entry.get("zw_mm", []), dtype=float)
+    y = np.asarray(curve_entry.get("mr_dzw_ds", []), dtype=float)
+    valid = np.isfinite(zw) & np.isfinite(y)
+    if int(np.count_nonzero(valid)) < 2:
+        return fb
+    zwv = zw[valid]
+    yv = y[valid]
+    x = float(np.clip(float(zw_mm), float(np.min(zwv)), float(np.max(zwv))))
+    out = float(np.interp(x, zwv, yv))
+    return out if np.isfinite(out) and abs(out) > 1e-12 else fb
 
 
 def _eval_poly_terms(poly_terms: List[dict], variables: Dict[str, float]) -> float:
@@ -2158,8 +2402,16 @@ def _interpolate_1d(x: float, x_values: List[float], y_values: List[float]) -> T
     return yq, slope
 
 
-def _extract_platform_solver_parameters_from_json(calibrated_json_data: Dict[str, Any]) -> Dict[str, Any]:
+def _extract_platform_solver_parameters_from_json(
+    calibrated_json_data: Dict[str, Any],
+    base_json_data: Optional[Dict[str, Any]] = None,
+    current_json_data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     cfg = calibrated_json_data.get("config", {}) if isinstance(calibrated_json_data.get("config"), dict) else {}
+    base_cfg_src = base_json_data if isinstance(base_json_data, dict) else calibrated_json_data
+    current_cfg_src = current_json_data if isinstance(current_json_data, dict) else calibrated_json_data
+    base_cfg = base_cfg_src.get("config", {}) if isinstance(base_cfg_src.get("config"), dict) else {}
+    current_cfg = current_cfg_src.get("config", {}) if isinstance(current_cfg_src.get("config"), dict) else {}
     chassis = cfg.get("chassis", {}) if isinstance(cfg.get("chassis"), dict) else {}
     mass_block = chassis.get("carRunningMass", {}) if isinstance(chassis.get("carRunningMass"), dict) else {}
     suspension = cfg.get("suspension", {}) if isinstance(cfg.get("suspension"), dict) else {}
@@ -2197,6 +2449,12 @@ def _extract_platform_solver_parameters_from_json(calibrated_json_data: Dict[str
     arb_r = _arb_block("rear")
     axle_f = suspension.get("front", {}) if isinstance(suspension.get("front"), dict) else {}
     axle_r = suspension.get("rear", {}) if isinstance(suspension.get("rear"), dict) else {}
+    base_susp = base_cfg.get("suspension", {}) if isinstance(base_cfg.get("suspension"), dict) else {}
+    current_susp = current_cfg.get("suspension", {}) if isinstance(current_cfg.get("suspension"), dict) else {}
+    axle_f_base = base_susp.get("front", {}) if isinstance(base_susp.get("front"), dict) else {}
+    axle_r_base = base_susp.get("rear", {}) if isinstance(base_susp.get("rear"), dict) else {}
+    axle_f_current = current_susp.get("front", {}) if isinstance(current_susp.get("front"), dict) else {}
+    axle_r_current = current_susp.get("rear", {}) if isinstance(current_susp.get("rear"), dict) else {}
 
     def _spring_wheel_rate(spring: Dict[str, Any]) -> float:
         k_spring = _safe_float(spring.get("kSpring", 0.0), 0.0)
@@ -2318,6 +2576,177 @@ def _extract_platform_solver_parameters_from_json(calibrated_json_data: Dict[str
         # In this app MR_WD is treated as linear wheel-domain ratio; convert stroke -> wheel travel.
         return float(stroke_bump_m * mr_scale), float(stroke_droop_m * mr_scale)
 
+    def _as_point_m(raw: Any) -> Optional[np.ndarray]:
+        if not isinstance(raw, (list, tuple)) or len(raw) < 3:
+            return None
+        try:
+            arr = np.asarray([float(raw[0]), float(raw[1]), float(raw[2])], dtype=float)
+        except Exception:
+            return None
+        if np.any(~np.isfinite(arr)):
+            return None
+        if float(np.max(np.abs(arr))) > 20.0:
+            arr = arr * 1e-3
+        return arr
+
+    def _rotate_about_axis(point: np.ndarray, axis_point: np.ndarray, axis_dir: np.ndarray, angle_rad: float) -> np.ndarray:
+        k = axis_dir / max(np.linalg.norm(axis_dir), 1e-12)
+        v = point - axis_point
+        c = math.cos(float(angle_rad))
+        s = math.sin(float(angle_rad))
+        v_rot = (v * c) + (np.cross(k, v) * s) + (k * np.dot(k, v) * (1.0 - c))
+        return axis_point + v_rot
+
+    def _travel_from_rocker_limits_static_formula(axle_data: Dict[str, Any], mr_static_dzw_ds: float) -> Tuple[Optional[float], Optional[float]]:
+        try:
+            ext_pick = _cfg_get(axle_data, ["external", "pickUpPts"], {})
+            int_pick = _cfg_get(axle_data, ["internal", "pickUpPts"], {})
+            travel_limits = ext_pick.get("travelLimits", {}) if isinstance(ext_pick, dict) else {}
+            a_min = _safe_float(travel_limits.get("aRockerMin", np.nan), np.nan)
+            a_max = _safe_float(travel_limits.get("aRockerMax", np.nan), np.nan)
+            if (not np.isfinite(a_min)) or (not np.isfinite(a_max)):
+                return None, None
+            # If limits look like degrees, convert to radians.
+            if max(abs(a_min), abs(a_max)) > (2.0 * math.pi + 1e-9):
+                a_min = math.radians(float(a_min))
+                a_max = math.radians(float(a_max))
+
+            p_axis = _as_point_m(ext_pick.get("rRockerC", None))
+            p_axis_dir = _as_point_m(ext_pick.get("rRockerAxis", None))
+            p_damper_rocker_0 = _as_point_m(int_pick.get("rCornerDamper", None))
+            p_damper_chassis = _as_point_m(int_pick.get("rCornerDamperChassis", None))
+            if any(x is None for x in [p_axis, p_axis_dir, p_damper_rocker_0, p_damper_chassis]):
+                return None, None
+            assert p_axis is not None and p_axis_dir is not None and p_damper_rocker_0 is not None and p_damper_chassis is not None
+
+            axis_dir = p_axis_dir - p_axis
+            if np.linalg.norm(axis_dir) < 1e-12:
+                return None, None
+
+            def _ld(a: float) -> float:
+                p_rot = _rotate_about_axis(p_damper_rocker_0, p_axis, axis_dir, float(a))
+                return float(np.linalg.norm(p_damper_chassis - p_rot))
+
+            ld0 = _ld(0.0)
+            s_lim_a = _ld(float(a_min)) - ld0
+            s_lim_b = _ld(float(a_max)) - ld0
+            s_static = _extract_damper_static_stroke_m(axle_data)
+            if s_static is None or (not np.isfinite(float(s_static))):
+                s_static = 0.0
+
+            delta_s_a = float(s_lim_a - s_static)
+            delta_s_b = float(s_lim_b - s_static)
+            mr = float(mr_static_dzw_ds) if np.isfinite(mr_static_dzw_ds) else 1.0
+            wheel_delta_a_mm = 1000.0 * delta_s_a * mr
+            wheel_delta_b_mm = 1000.0 * delta_s_b * mr
+            bump_mm = max(0.0, wheel_delta_a_mm, wheel_delta_b_mm)
+            droop_mm = max(0.0, -wheel_delta_a_mm, -wheel_delta_b_mm)
+            return float(bump_mm * 1e-3), float(droop_mm * 1e-3)
+        except Exception:
+            return None, None
+
+    def _extract_rocker_static_angle_rad(axle_data: Dict[str, Any], default_rad: float = 0.0) -> float:
+        keys_rad = {
+            "omega0",
+            "omega_0",
+            "omega0_rad",
+            "rocker_angle_static_rad",
+            "arocker0_rad",
+            "arockerstatic_rad",
+            "arocker0",
+            "arockerstatic",
+        }
+        keys_deg = {
+            "omega0_deg",
+            "omega_0_deg",
+            "rocker_angle_static_deg",
+            "arocker0_deg",
+            "arockerstatic_deg",
+        }
+        val_rad = _find_first_numeric_by_keys(axle_data, keys_rad)
+        if val_rad is not None and np.isfinite(float(val_rad)):
+            vv = float(val_rad)
+            if abs(vv) > (2.0 * math.pi + 1e-9):
+                return float(math.radians(vv))
+            return float(vv)
+        val_deg = _find_first_numeric_by_keys(axle_data, keys_deg)
+        if val_deg is not None and np.isfinite(float(val_deg)):
+            return float(math.radians(float(val_deg)))
+        return float(default_rad)
+
+    def _rocker_static_meta(
+        axle_base_data: Dict[str, Any],
+        axle_current_data: Dict[str, Any],
+        mr_static_dzw_ds: float,
+    ) -> Optional[Dict[str, float]]:
+        try:
+            ext_pick_base = _cfg_get(axle_base_data, ["external", "pickUpPts"], {})
+            int_pick_base = _cfg_get(axle_base_data, ["internal", "pickUpPts"], {})
+            travel_limits = ext_pick_base.get("travelLimits", {}) if isinstance(ext_pick_base, dict) else {}
+            a_min = _safe_float(travel_limits.get("aRockerMin", np.nan), np.nan)
+            a_max = _safe_float(travel_limits.get("aRockerMax", np.nan), np.nan)
+            if (not np.isfinite(a_min)) or (not np.isfinite(a_max)):
+                return None
+            if max(abs(a_min), abs(a_max)) > (2.0 * math.pi + 1e-9):
+                a_min = math.radians(float(a_min))
+                a_max = math.radians(float(a_max))
+
+            p_axis = _as_point_m(ext_pick_base.get("rRockerC", None))
+            p_axis_dir = _as_point_m(ext_pick_base.get("rRockerAxis", None))
+            p_damper_rocker_0 = _as_point_m(int_pick_base.get("rCornerDamper", None))
+            p_damper_chassis = _as_point_m(int_pick_base.get("rCornerDamperChassis", None))
+            if any(x is None for x in [p_axis, p_axis_dir, p_damper_rocker_0, p_damper_chassis]):
+                return None
+            assert p_axis is not None and p_axis_dir is not None and p_damper_rocker_0 is not None and p_damper_chassis is not None
+            axis_dir = p_axis_dir - p_axis
+            if np.linalg.norm(axis_dir) < 1e-12:
+                return None
+
+            def _ld(a: float) -> float:
+                p_rot = _rotate_about_axis(p_damper_rocker_0, p_axis, axis_dir, float(a))
+                return float(np.linalg.norm(p_damper_chassis - p_rot))
+
+            ld0 = _ld(0.0)
+            s_lim_a = _ld(float(a_min)) - ld0
+            s_lim_b = _ld(float(a_max)) - ld0
+            omega0_base = _extract_rocker_static_angle_rad(axle_base_data, default_rad=0.0)
+            omega0_current = _extract_rocker_static_angle_rad(axle_current_data, default_rad=omega0_base)
+            s_zero_base = _ld(float(omega0_base)) - ld0
+            s_current = _ld(float(omega0_current)) - ld0
+            mr = float(mr_static_dzw_ds) if np.isfinite(mr_static_dzw_ds) and abs(float(mr_static_dzw_ds)) > 1e-12 else 1.0
+
+            def _wheel_from_s(sx: float) -> float:
+                return float(1000.0 * (float(sx) - float(s_zero_base)) * mr)
+
+            wheel_limit_min = _wheel_from_s(s_lim_a)
+            wheel_limit_max = _wheel_from_s(s_lim_b)
+            wheel_min = float(min(wheel_limit_min, wheel_limit_max))
+            wheel_max = float(max(wheel_limit_min, wheel_limit_max))
+            wheel_current = _wheel_from_s(s_current)
+            bump_mm = max(0.0, wheel_max - wheel_current)
+            droop_mm = max(0.0, wheel_current - wheel_min)
+
+            return {
+                "a_min_rad": float(a_min),
+                "a_max_rad": float(a_max),
+                "omega0_base_rad": float(omega0_base),
+                "omega0_current_rad": float(omega0_current),
+                "s_zero_base_m": float(s_zero_base),
+                "s_current_m": float(s_current),
+                "s_lim_a_m": float(s_lim_a),
+                "s_lim_b_m": float(s_lim_b),
+                "wheel_limit_min_mm": float(wheel_limit_min),
+                "wheel_limit_max_mm": float(wheel_limit_max),
+                "wheel_min_mm": float(wheel_min),
+                "wheel_max_mm": float(wheel_max),
+                "wheel_current_mm": float(wheel_current),
+                "mr_static_dzw_ds": float(mr),
+                "bump_m": float(bump_mm * 1e-3),
+                "droop_m": float(droop_mm * 1e-3),
+            }
+        except Exception:
+            return None
+
     def _arb_wheel_rate(arb: Dict[str, Any]) -> Tuple[float, str]:
         k_arb = _safe_float(arb.get("kAntiRollBar", 0.0), 0.0)
         mr_da = _safe_float(arb.get("MR_DA_Linear", 1.0), 1.0)
@@ -2352,19 +2781,50 @@ def _extract_platform_solver_parameters_from_json(calibrated_json_data: Dict[str
     travel_limit_source = "fallback_bumpstop_plus_default_droop"
     mr_front_wd = _safe_float(spring_f.get("MR_WD", 1.0), 1.0)
     mr_rear_wd = _safe_float(spring_r.get("MR_WD", 1.0), 1.0)
-    front_bump_from_stroke_m, front_droop_from_stroke_m = _travel_from_static_and_stroke_limits(axle_f, mr_front_wd)
-    rear_bump_from_stroke_m, rear_droop_from_stroke_m = _travel_from_static_and_stroke_limits(axle_r, mr_rear_wd)
-    if (front_bump_from_stroke_m is not None) and (front_droop_from_stroke_m is not None):
-        front_max_comp_m = float(np.clip(front_bump_from_stroke_m, 0.005, 0.150))
-        front_max_droop_m = float(np.clip(front_droop_from_stroke_m, 0.005, 0.150))
-        travel_limit_source = "damper_static_plus_stroke_limits_front"
-    if (rear_bump_from_stroke_m is not None) and (rear_droop_from_stroke_m is not None):
-        rear_max_comp_m = float(np.clip(rear_bump_from_stroke_m, 0.005, 0.150))
-        rear_max_droop_m = float(np.clip(rear_droop_from_stroke_m, 0.005, 0.150))
-        if travel_limit_source == "damper_static_plus_stroke_limits_front":
-            travel_limit_source = "damper_static_plus_stroke_limits_front_rear"
+    mr_front_wd_current = _safe_float(
+        _cfg_get(current_cfg, ["suspension", "front", "internal", "spring", "MR_WD"], mr_front_wd),
+        mr_front_wd,
+    )
+    mr_rear_wd_current = _safe_float(
+        _cfg_get(current_cfg, ["suspension", "rear", "internal", "spring", "MR_WD"], mr_rear_wd),
+        mr_rear_wd,
+    )
+    front_rocker_meta = _rocker_static_meta(axle_f_base, axle_f_current, mr_front_wd_current)
+    rear_rocker_meta = _rocker_static_meta(axle_r_base, axle_r_current, mr_rear_wd_current)
+    front_bump_rocker_m = float(front_rocker_meta["bump_m"]) if isinstance(front_rocker_meta, dict) else None
+    front_droop_rocker_m = float(front_rocker_meta["droop_m"]) if isinstance(front_rocker_meta, dict) else None
+    rear_bump_rocker_m = float(rear_rocker_meta["bump_m"]) if isinstance(rear_rocker_meta, dict) else None
+    rear_droop_rocker_m = float(rear_rocker_meta["droop_m"]) if isinstance(rear_rocker_meta, dict) else None
+
+    if (front_bump_rocker_m is not None) and (front_droop_rocker_m is not None):
+        front_max_comp_m = float(np.clip(front_bump_rocker_m, 0.005, 0.150))
+        front_max_droop_m = float(np.clip(front_droop_rocker_m, 0.005, 0.150))
+        travel_limit_source = "rocker_limits_static_formula_front"
+    else:
+        front_bump_from_stroke_m, front_droop_from_stroke_m = _travel_from_static_and_stroke_limits(axle_f, mr_front_wd)
+        if (front_bump_from_stroke_m is not None) and (front_droop_from_stroke_m is not None):
+            front_max_comp_m = float(np.clip(front_bump_from_stroke_m, 0.005, 0.150))
+            front_max_droop_m = float(np.clip(front_droop_from_stroke_m, 0.005, 0.150))
+            travel_limit_source = "damper_static_plus_stroke_limits_front"
+
+    if (rear_bump_rocker_m is not None) and (rear_droop_rocker_m is not None):
+        rear_max_comp_m = float(np.clip(rear_bump_rocker_m, 0.005, 0.150))
+        rear_max_droop_m = float(np.clip(rear_droop_rocker_m, 0.005, 0.150))
+        if travel_limit_source == "rocker_limits_static_formula_front":
+            travel_limit_source = "rocker_limits_static_formula_front_rear"
+        elif travel_limit_source == "damper_static_plus_stroke_limits_front":
+            travel_limit_source = "mixed_front_stroke_rear_rocker"
         else:
-            travel_limit_source = "damper_static_plus_stroke_limits_rear"
+            travel_limit_source = "rocker_limits_static_formula_rear"
+    else:
+        rear_bump_from_stroke_m, rear_droop_from_stroke_m = _travel_from_static_and_stroke_limits(axle_r, mr_rear_wd)
+        if (rear_bump_from_stroke_m is not None) and (rear_droop_from_stroke_m is not None):
+            rear_max_comp_m = float(np.clip(rear_bump_from_stroke_m, 0.005, 0.150))
+            rear_max_droop_m = float(np.clip(rear_droop_from_stroke_m, 0.005, 0.150))
+            if travel_limit_source in {"rocker_limits_static_formula_front", "damper_static_plus_stroke_limits_front"}:
+                travel_limit_source = "front_rear_limits_from_json_static"
+            else:
+                travel_limit_source = "damper_static_plus_stroke_limits_rear"
 
     z_cg_raw = _safe_float(chassis.get("zCoG", 0.0), 0.0)
     z_cg_ref_mm = abs(z_cg_raw) * 1000.0 if abs(z_cg_raw) < 10.0 else abs(z_cg_raw)
@@ -2381,6 +2841,10 @@ def _extract_platform_solver_parameters_from_json(calibrated_json_data: Dict[str
         "z_cg_ref_mm": float(z_cg_ref_mm),
         "front_spring_wheel_rate_npm": float(_spring_wheel_rate(spring_f)),
         "rear_spring_wheel_rate_npm": float(_spring_wheel_rate(spring_r)),
+        "front_spring_rate_npm": float(_safe_float(spring_f.get("kSpring", 0.0), 0.0)),
+        "rear_spring_rate_npm": float(_safe_float(spring_r.get("kSpring", 0.0), 0.0)),
+        "front_mr_wd_static": float(mr_front_wd),
+        "rear_mr_wd_static": float(mr_rear_wd),
         "front_preload_n": float(_safe_float(spring_f.get("FSpringPreload", 0.0), 0.0)),
         "rear_preload_n": float(_safe_float(spring_r.get("FSpringPreload", 0.0), 0.0)),
         "front_bump_x_data": front_bump_x_data,
@@ -2394,6 +2858,8 @@ def _extract_platform_solver_parameters_from_json(calibrated_json_data: Dict[str
         "front_max_droop_m": float(front_max_droop_m),
         "rear_max_droop_m": float(rear_max_droop_m),
         "travel_limit_source": str(travel_limit_source),
+        "front_rocker_meta": dict(front_rocker_meta) if isinstance(front_rocker_meta, dict) else None,
+        "rear_rocker_meta": dict(rear_rocker_meta) if isinstance(rear_rocker_meta, dict) else None,
         "front_compliance_mpn": float(_compliance_to_m_per_n(chassis.get("kVerticalSuspensionComplianceF", 0.0))),
         "rear_compliance_mpn": float(_compliance_to_m_per_n(chassis.get("kVerticalSuspensionComplianceR", 0.0))),
         "front_arb_wheel_rate_npm": float(_arb_wheel_rate(arb_f)[0]),
@@ -2438,9 +2904,9 @@ def _platform_eval_aero_loads(
     raw_clr = _eval_poly_terms(list(aero.get("cl_rear_poly", []) or []), vars_map)
     raw_cd = _eval_poly_terms(list(aero.get("cd_poly", []) or []), vars_map)
     drs_effective = bool(drs_on and bool(aero.get("drs_enabled", False)))
-    dclf = _eval_poly_terms(list(aero.get("drs_cl_front_poly", []) or []), vars_map) if drs_effective else 0.0
-    dclr = _eval_poly_terms(list(aero.get("drs_cl_rear_poly", []) or []), vars_map) if drs_effective else 0.0
-    dcd = _eval_poly_terms(list(aero.get("drs_cd_poly", []) or []), vars_map) if drs_effective else 0.0
+    dclf_raw = _eval_poly_terms(list(aero.get("drs_cl_front_poly", []) or []), vars_map) if drs_effective else 0.0
+    dclr_raw = _eval_poly_terms(list(aero.get("drs_cl_rear_poly", []) or []), vars_map) if drs_effective else 0.0
+    dcd_raw = _eval_poly_terms(list(aero.get("drs_cd_poly", []) or []), vars_map) if drs_effective else 0.0
 
     cl_front_offset = _safe_float(offsets.get("CLiftBodyFUserOffset", 0.0), 0.0)
     cl_rear_offset = _safe_float(offsets.get("CLiftBodyRUserOffset", 0.0), 0.0)
@@ -2449,9 +2915,24 @@ def _platform_eval_aero_loads(
     aero_bal_offset = _safe_float(offsets.get("rAeroBalanceUserOffset", 0.0), 0.0)
     front_share = float(np.clip(0.5 + aero_bal_offset, 0.0, 1.0))
     rear_share = 1.0 - front_share
-    cl_front = ((raw_clf + cl_front_offset + cl_global_offset * front_share) * _safe_float(aero.get("cl_front_factor", 1.0), 1.0)) + dclf
-    cl_rear = ((raw_clr + cl_rear_offset + cl_global_offset * rear_share) * _safe_float(aero.get("cl_rear_factor", 1.0), 1.0)) + dclr
-    cd_total = ((raw_cd + cd_offset) * _safe_float(aero.get("cd_factor", 1.0), 1.0)) + dcd
+    cl_front_base = (raw_clf + cl_front_offset + cl_global_offset * front_share) * _safe_float(aero.get("cl_front_factor", 1.0), 1.0)
+    cl_rear_base = (raw_clr + cl_rear_offset + cl_global_offset * rear_share) * _safe_float(aero.get("cl_rear_factor", 1.0), 1.0)
+    cd_base = (raw_cd + cd_offset) * _safe_float(aero.get("cd_factor", 1.0), 1.0)
+
+    # DRS convention for Platform Explorer:
+    # "drs_on" means open wing => always unload/down-drag relative to closed.
+    if drs_effective:
+        dclf = -abs(float(dclf_raw))
+        dclr = -abs(float(dclr_raw))
+        dcd = -abs(float(dcd_raw))
+    else:
+        dclf = 0.0
+        dclr = 0.0
+        dcd = 0.0
+
+    cl_front = cl_front_base + dclf
+    cl_rear = cl_rear_base + dclr
+    cd_total = max(0.0, cd_base + dcd)
 
     v_mps = float(speed_kph) / 3.6
     qA = 0.5 * float(air_density) * (v_mps * v_mps) * max(1e-9, _safe_float(aero.get("ARef", 1.0), 1.0))
@@ -2466,6 +2947,9 @@ def _platform_eval_aero_loads(
         "aero_balance_front_pct": float(aero_balance_front_pct) if np.isfinite(aero_balance_front_pct) else float("nan"),
         "drag_force_n": float(qA * cd_total),
         "drs_effective": bool(drs_effective),
+        "drs_delta_cl_front_raw": float(dclf_raw),
+        "drs_delta_cl_rear_raw": float(dclr_raw),
+        "drs_delta_cd_raw": float(dcd_raw),
     }
 
 
@@ -3615,11 +4099,12 @@ def _platform_apply_hard_ride_height_bounds(rows: List[Dict[str, Any]]) -> Tuple
             front_travel = float(base_front - hf_clip)
             rear_travel = float(base_rear - hr_clip)
             body_heave_comp = 0.5 * (front_travel + rear_travel)
+            body_heave_signed = -body_heave_comp
             rr["front_platform_travel_mm"] = front_travel
             rr["rear_platform_travel_mm"] = rear_travel
             rr["body_heave_compression_mm"] = body_heave_comp
-            rr["body_heave_mm"] = body_heave_comp
-            rr["body_heave_chassis_up_mm"] = -body_heave_comp
+            rr["body_heave_mm"] = body_heave_signed
+            rr["body_heave_chassis_up_mm"] = body_heave_signed
             rr["rake_mm"] = hr_clip - hf_clip
         out.append(rr)
     return out, int(corrected)
@@ -3632,7 +4117,6 @@ def _compute_platform_explorer_grid(
     body: Dict[str, Any],
 ) -> Dict[str, Any]:
     t0 = time.perf_counter()
-    geometry_state_cache: Dict[Tuple[float, float, float, float], Dict[str, float]] = {}
     fixed_inputs = dict(body.get("fixed_inputs") or {})
     sweep = dict(body.get("sweep") or {})
     fixed = {
@@ -3642,12 +4126,6 @@ def _compute_platform_explorer_grid(
         "fuel_mass_kg": float(max(0.0, _safe_float(fixed_inputs.get("fuel_mass_kg", 0.0), 0.0))),
         "drs_on": bool(body.get("drs_on", fixed_inputs.get("drs_on", False))),
         "air_density": float(_safe_float(fixed_inputs.get("air_density", body.get("air_density", 1.225)), 1.225)),
-        # Production defaults (always on): prioritize speed while forcing continuity safeguards.
-        "solver_mode": "turbo",
-        "local_branch_lock": True,
-        "max_delta_per_point_mm": float(max(1.5, _safe_float(body.get("max_delta_per_point_mm", 2.5), 2.5))),
-        "enable_jump_refine": True,
-        "retry_on_nonconverged": False,
     }
     x_variable = str(sweep.get("x_variable", "")).strip() or "speed_kph"
     y_variable_raw = sweep.get("y_variable")
@@ -3658,116 +4136,244 @@ def _compute_platform_explorer_grid(
         raise ValueError("y_variable must be one of: ax_g, ay_g, speed_kph, fuel_mass_kg, drs_on")
     x_values, _ = _platform_axis_values(x_variable, sweep, fixed, "x")
     y_values, _ = _platform_axis_values(y_variable, sweep, fixed, "y") if y_variable else ([0.0], False)
-    is_speed_1d = (not y_variable) and (x_variable == "speed_kph")
-    if is_speed_1d:
-        # Adaptive balance: keep runtime low while preserving continuity for speed sweeps.
-        fixed["solver_mode"] = "turbo"
-        fixed["retry_on_nonconverged"] = False
-        fixed["solver_max_iter"] = 10
-        fixed["solver_relax"] = 0.55
-        fixed["geometry_refresh_stride"] = 1
-        if len(x_values) > 1:
-            x_step_nom = float(np.median(np.abs(np.diff(np.asarray(x_values, dtype=float)))))
-        else:
-            x_step_nom = 5.0
-        fixed["speed_internal_step_kph"] = float(np.clip(0.45 * x_step_nom, 1.5, 4.0))
-        # Strong continuity lock for speed sweeps to avoid non-physical branch hopping.
-        branch_mm = float(np.clip(0.08 * x_step_nom, 0.4, 0.8))
-        fixed["max_delta_per_point_mm"] = float(min(_safe_float(fixed.get("max_delta_per_point_mm", 2.5), 2.5), branch_mm))
 
-    rows: List[Dict[str, Any]] = []
     point_count = len(x_values) * len(y_values)
     if point_count > 1200:
         raise ValueError("Sweep grid too large. Reduce ranges/step (max 1200 points).")
 
-    cache_key = f"{calibration_meta.get('calibration_model_id', 'default')}:{calibration_meta.get('json_signature', '')}"
-    last_state_cache = _state.get("platform_last_state")
-    if not isinstance(last_state_cache, dict):
-        last_state_cache = {}
-        _state["platform_last_state"] = last_state_cache
-    guess = dict(last_state_cache.get(cache_key) or {})
-    converged_count = 0
-    jump_threshold_mm = float(max(1.0, _safe_float(body.get("jump_threshold_mm", 8.0), 8.0)))
-    if is_speed_1d:
-        jump_threshold_mm = float(min(jump_threshold_mm, 2.0))
-    jump_refined_points = 0
-    workers_req = int(max(0, _safe_float(body.get("workers", 0), 0)))
-    cpu_count = max(1, int(os.cpu_count() or 1))
-    workers_auto = max(1, min(cpu_count, 16))
-    workers = workers_req if workers_req > 0 else workers_auto
-    # Always parallelize 2D sweeps when possible.
-    enable_parallel = bool(y_variable) and (len(y_values) > 1) and (workers > 1) and (point_count >= 40)
+    g = 9.80665
+    wbf = float(np.clip(_safe_float(platform_params.get("r_weight_bal_f", 0.5), 0.5), 0.0, 1.0))
+    wb_m = max(1e-9, _safe_float(platform_params.get("wheelbase_mm", 3000.0), 3000.0) / 1000.0)
+    x_front = max(1e-9, (1.0 - wbf) * wb_m)
+    x_rear = max(1e-9, wbf * wb_m)
+    m_hub_f = _safe_float(platform_params.get("m_hub_f_kg", 0.0), 0.0)
+    m_hub_r = _safe_float(platform_params.get("m_hub_r_kg", 0.0), 0.0)
+    m_s_base = _safe_float(platform_params.get("mass_sprung_base_kg", 0.0), 0.0)
 
-    if enable_parallel:
-        jobs = [(idx, float(yv)) for idx, yv in enumerate(y_values)]
-        results_by_idx: Dict[int, Dict[str, Any]] = {}
-        with cf.ProcessPoolExecutor(
-            max_workers=int(workers),
-            initializer=_platform_worker_init,
-            initargs=(
-                calibrated_json_data,
-                calibration_meta,
-                platform_params,
-                fixed,
-                x_variable,
-                str(y_variable),
-                [float(v) for v in x_values],
-                float(jump_threshold_mm),
-            ),
-        ) as ex:
-            futures = [ex.submit(_platform_worker_run_row, job) for job in jobs]
-            for fut in cf.as_completed(futures):
-                got = fut.result()
-                results_by_idx[int(got["row_index"])] = got
-        for idx in range(len(y_values)):
-            got = results_by_idx.get(idx, {})
-            rows.extend(list(got.get("rows", [])))
-            converged_count += int(got.get("converged_count", 0))
-            jump_refined_points += int(got.get("jump_refined", 0))
-    else:
-        for yi, yv in enumerate(y_values):
-            x_iter = x_values if (yi % 2 == 0) else list(reversed(x_values))
-            seq = _platform_compute_row_sequence(
-                calibrated_json_data=calibrated_json_data,
-                calibration_meta=calibration_meta,
-                platform_params=platform_params,
-                fixed=fixed,
-                x_variable=x_variable,
-                y_variable=y_variable,
-                x_values=[float(v) for v in x_iter],
-                y_value=float(yv),
-                initial_guess=guess if isinstance(guess, dict) and guess else None,
-                geometry_state_cache=geometry_state_cache,
-                jump_threshold_mm=jump_threshold_mm,
-            )
-            rows.extend(list(seq.get("rows", [])))
-            guess = dict(seq.get("last_guess", {}))
-            converged_count += int(seq.get("converged_count", 0))
-            jump_refined_points += int(seq.get("jump_refined", 0))
-    if guess:
-        last_state_cache[cache_key] = guess
+    kf_spring_raw = max(1.0, _safe_float(platform_params.get("front_spring_rate_npm", 0.0), 0.0))
+    kr_spring_raw = max(1.0, _safe_float(platform_params.get("rear_spring_rate_npm", 0.0), 0.0))
+    mr_front_static = _safe_float(platform_params.get("front_mr_wd_static", 1.0), 1.0)
+    mr_rear_static = _safe_float(platform_params.get("rear_mr_wd_static", 1.0), 1.0)
+    mr_curves = platform_params.get("mr_curves") if isinstance(platform_params.get("mr_curves"), dict) else {}
+    mr_curve_front = mr_curves.get("front") if isinstance(mr_curves.get("front"), dict) else None
+    mr_curve_rear = mr_curves.get("rear") if isinstance(mr_curves.get("rear"), dict) else None
+    cf = max(0.0, _safe_float(platform_params.get("front_compliance_mpn", 0.0), 0.0))
+    cr = max(0.0, _safe_float(platform_params.get("rear_compliance_mpn", 0.0), 0.0))
+    def _k_eff(k_wheel: float, compliance_mpn: float) -> float:
+        k = max(1.0, float(k_wheel))
+        c = max(0.0, float(compliance_mpn))
+        if c <= 1e-15:
+            return k
+        return 1.0 / max(1e-12, (1.0 / k) + c)
+    base_hf = max(0.0, _safe_float(platform_params.get("base_hRideF_m", 0.0), 0.0))
+    base_hr = max(0.0, _safe_float(platform_params.get("base_hRideR_m", 0.0), 0.0))
+    hf_min = max(0.0, _safe_float(platform_params.get("min_hRideF_m", 0.0), 0.0))
+    hr_min = max(0.0, _safe_float(platform_params.get("min_hRideR_m", 0.0), 0.0))
+    hf_max = max(base_hf, _safe_float(platform_params.get("max_hRideF_m", base_hf), base_hf))
+    hr_max = max(base_hr, _safe_float(platform_params.get("max_hRideR_m", base_hr), base_hr))
+    front_rocker_meta = platform_params.get("front_rocker_meta") if isinstance(platform_params.get("front_rocker_meta"), dict) else None
+    rear_rocker_meta = platform_params.get("rear_rocker_meta") if isinstance(platform_params.get("rear_rocker_meta"), dict) else None
 
-    speed_guard_corrections = 0
-    local_window_refined_points = 0
-    soft_limiter_corrections = 0
-    if is_speed_1d and rows and (not enable_parallel):
-        rows, local_window_refined_points = _platform_refine_speed_local_windows(
-            calibrated_json_data=calibrated_json_data,
-            calibration_meta=calibration_meta,
-            platform_params=platform_params,
-            fixed=fixed,
-            rows=rows,
-            geometry_state_cache=geometry_state_cache,
-        )
-        rows, soft_limiter_corrections = _platform_soft_physics_limiter_speed(rows)
-    hard_bound_corrections = 0
+    def _clip_h_by_rocker(base_h: float, h_req: float, meta: Optional[Dict[str, Any]]) -> Tuple[float, float, bool, str]:
+        # Returns: (h_clipped, s_current_m, limit_hit, limit_type[min|max|none])
+        if not isinstance(meta, dict):
+            return float(h_req), float("nan"), False, "none"
+        bump_m = max(0.0, _safe_float(meta.get("bump_m", np.nan), np.nan))
+        droop_m = max(0.0, _safe_float(meta.get("droop_m", np.nan), np.nan))
+        s_current_base = _safe_float(meta.get("s_current_m", np.nan), np.nan)
+        mr = _safe_float(meta.get("mr_static_dzw_ds", np.nan), np.nan)
+        if (not np.isfinite(bump_m)) or (not np.isfinite(droop_m)) or (not np.isfinite(mr)) or (abs(mr) < 1e-12):
+            return float(h_req), float("nan"), False, "none"
+        wheel_travel_req = float(base_h - h_req)  # +compression
+        wheel_travel_clip = float(np.clip(wheel_travel_req, -droop_m, bump_m))
+        h_clip = float(base_h - wheel_travel_clip)
+        hit = abs(wheel_travel_clip - wheel_travel_req) > 1e-12
+        limit_type = "none"
+        if hit:
+            if wheel_travel_clip <= (-droop_m + 1e-12):
+                limit_type = "min"
+            else:
+                limit_type = "max"
+        s_now = float("nan")
+        if np.isfinite(s_current_base):
+            s_now = float(s_current_base + (wheel_travel_clip / mr))
+        return h_clip, s_now, hit, limit_type
+
+    base_geom = dict(platform_params.get("base_geometry", {}))
+    rc_f_mm = _safe_float(base_geom.get("front_rc_height_mm", base_geom.get("front_rc_z_mm", np.nan)), np.nan)
+    rc_r_mm = _safe_float(base_geom.get("rear_rc_height_mm", base_geom.get("rear_rc_z_mm", np.nan)), np.nan)
+    lam = float(np.clip(x_front / max(x_front + x_rear, 1e-9), 0.0, 1.0))
+    roll_axis_h_mm = (rc_f_mm + lam * (rc_r_mm - rc_f_mm)) if (np.isfinite(rc_f_mm) and np.isfinite(rc_r_mm)) else float("nan")
+    pitch_axis_h_mm = _safe_float(base_geom.get("pitch_z_mm", np.nan), np.nan)
+    cg_x_mm = _safe_float(base_geom.get("cg_x_mm", np.nan), np.nan)
+    cg_y_mm = _safe_float(base_geom.get("cg_y_mm", np.nan), np.nan)
+    cg_z_mm = _safe_float(base_geom.get("cg_z_mm", np.nan), np.nan)
+    h_cg_mm = _safe_float(base_geom.get("h_cg_mm", np.nan), np.nan)
+
+    rows: List[Dict[str, Any]] = []
+    for yi, yv in enumerate(y_values):
+        x_iter = x_values if (yi % 2 == 0) else list(reversed(x_values))
+        h_prev_f = base_hf
+        h_prev_r = base_hr
+        for xv in x_iter:
+            point_inputs = dict(fixed)
+            if x_variable == "drs_on":
+                point_inputs["drs_on"] = bool(float(xv) >= 0.5)
+            else:
+                point_inputs[x_variable] = float(xv)
+            if y_variable:
+                if y_variable == "drs_on":
+                    point_inputs["drs_on"] = bool(float(yv) >= 0.5)
+                else:
+                    point_inputs[y_variable] = float(yv)
+
+            speed_kph = float(_safe_float(point_inputs.get("speed_kph", 0.0), 0.0))
+            fuel_mass = float(max(0.0, _safe_float(point_inputs.get("fuel_mass_kg", 0.0), 0.0)))
+            drs_on = bool(point_inputs.get("drs_on", False))
+            rho = float(_safe_float(point_inputs.get("air_density", 1.225), 1.225))
+
+            aero = _platform_eval_aero_loads(platform_params, h_prev_f, h_prev_r, speed_kph, drs_on=drs_on, air_density=rho)
+            f_fuel_front = fuel_mass * g * wbf
+            f_fuel_rear = fuel_mass * g * (1.0 - wbf)
+
+            # Non-linear MR per step: evaluate at current axle wheel travel (mm, +compression).
+            front_travel_prev_mm = float((base_hf - h_prev_f) * 1000.0)
+            rear_travel_prev_mm = float((base_hr - h_prev_r) * 1000.0)
+            mr_front_now = _interp_platform_mr_dzw_ds(mr_curve_front, front_travel_prev_mm, mr_front_static)
+            mr_rear_now = _interp_platform_mr_dzw_ds(mr_curve_rear, rear_travel_prev_mm, mr_rear_static)
+            mr_front_now = float(mr_front_now) if (np.isfinite(mr_front_now) and abs(mr_front_now) > 1e-12) else float(mr_front_static)
+            mr_rear_now = float(mr_rear_now) if (np.isfinite(mr_rear_now) and abs(mr_rear_now) > 1e-12) else float(mr_rear_static)
+
+            kf_wheel = max(1.0, float(kf_spring_raw) / (mr_front_now * mr_front_now))
+            kr_wheel = max(1.0, float(kr_spring_raw) / (mr_rear_now * mr_rear_now))
+            k_fl = _k_eff(kf_wheel, cf)
+            k_fr = _k_eff(kf_wheel, cf)
+            k_rl = _k_eff(kr_wheel, cr)
+            k_rr = _k_eff(kr_wheel, cr)
+            kz_front = max(1.0, k_fl + k_fr)
+            kz_rear = max(1.0, k_rl + k_rr)
+
+            dz_front = (f_fuel_front + _safe_float(aero.get("front_aero_load_n", 0.0), 0.0)) / kz_front
+            dz_rear = (f_fuel_rear + _safe_float(aero.get("rear_aero_load_n", 0.0), 0.0)) / kz_rear
+
+            h_req_f = float(base_hf - dz_front)
+            h_req_r = float(base_hr - dz_rear)
+            h_rocker_f, s_front_now_m, front_rocker_hit, front_rocker_limit_type = _clip_h_by_rocker(base_hf, h_req_f, front_rocker_meta)
+            h_rocker_r, s_rear_now_m, rear_rocker_hit, rear_rocker_limit_type = _clip_h_by_rocker(base_hr, h_req_r, rear_rocker_meta)
+            h_new_f = float(np.clip(h_rocker_f, hf_min, hf_max))
+            h_new_r = float(np.clip(h_rocker_r, hr_min, hr_max))
+
+            front_travel_mm = (base_hf - h_new_f) * 1000.0
+            rear_travel_mm = (base_hr - h_new_r) * 1000.0
+            body_heave_comp_mm = 0.5 * (front_travel_mm + rear_travel_mm)
+            body_heave_mm = -body_heave_comp_mm
+            base_rake_mm = (base_hr - base_hf) * 1000.0
+            rake_mm = (h_new_r - h_new_f) * 1000.0
+            body_pitch_deg = math.degrees(math.atan2((rake_mm - base_rake_mm) / 1000.0, wb_m))
+
+            m_s_eff = m_s_base + fuel_mass
+            front_static_axle_n = (m_s_eff * g * wbf) + (2.0 * m_hub_f * g)
+            rear_static_axle_n = (m_s_eff * g * (1.0 - wbf)) + (2.0 * m_hub_r * g)
+            front_axle_load = front_static_axle_n + _safe_float(aero.get("front_aero_load_n", 0.0), 0.0)
+            rear_axle_load = rear_static_axle_n + _safe_float(aero.get("rear_aero_load_n", 0.0), 0.0)
+
+            row = {
+                "ax_g": float(_safe_float(point_inputs.get("ax_g", 0.0), 0.0)),
+                "ay_g": float(_safe_float(point_inputs.get("ay_g", 0.0), 0.0)),
+                "speed_kph": speed_kph,
+                "drs_on": drs_on,
+                "fuel_mass_kg": fuel_mass,
+                "dz_fl_mm": float(front_travel_mm),
+                "dz_fr_mm": float(front_travel_mm),
+                "dz_rl_mm": float(rear_travel_mm),
+                "dz_rr_mm": float(rear_travel_mm),
+                "front_platform_travel_mm": float(front_travel_mm),
+                "rear_platform_travel_mm": float(rear_travel_mm),
+                "body_heave_mm": float(body_heave_mm),
+                "body_heave_compression_mm": float(body_heave_comp_mm),
+                "body_heave_chassis_up_mm": float(body_heave_mm),
+                "body_pitch_deg": float(body_pitch_deg),
+                "body_roll_deg": 0.0,
+                "hRideF_m": float(h_new_f),
+                "hRideR_m": float(h_new_r),
+                "hRideF_mm": float(h_new_f * 1000.0),
+                "hRideR_mm": float(h_new_r * 1000.0),
+                "rake_mm": float(rake_mm),
+                "cg_x_mm": _json_scalar(cg_x_mm),
+                "cg_y_mm": _json_scalar(cg_y_mm),
+                "cg_z_mm": _json_scalar(cg_z_mm),
+                "h_cg_mm": _json_scalar(h_cg_mm),
+                "roll_center_front_mm": _json_scalar(rc_f_mm),
+                "roll_center_rear_mm": _json_scalar(rc_r_mm),
+                "roll_axis_height_at_cg_mm": _json_scalar(roll_axis_h_mm),
+                "pitch_axis_height_at_cg_mm": _json_scalar(pitch_axis_h_mm),
+                "fz_fl_n": float(0.5 * front_axle_load),
+                "fz_fr_n": float(0.5 * front_axle_load),
+                "fz_rl_n": float(0.5 * rear_axle_load),
+                "fz_rr_n": float(0.5 * rear_axle_load),
+                "front_axle_load_n": float(front_axle_load),
+                "rear_axle_load_n": float(rear_axle_load),
+                "front_aero_load_n": float(_safe_float(aero.get("front_aero_load_n", 0.0), 0.0)),
+                "rear_aero_load_n": float(_safe_float(aero.get("rear_aero_load_n", 0.0), 0.0)),
+                "total_aero_load_n": float(_safe_float(aero.get("total_aero_load_n", 0.0), 0.0)),
+                "aero_balance_front_pct": _json_scalar(_safe_float(aero.get("aero_balance_front_pct", np.nan), np.nan)),
+                "drag_force_n": float(_safe_float(aero.get("drag_force_n", 0.0), 0.0)),
+                "elastic_roll_distribution_front_pct": float("nan"),
+                "lltd_total_front_pct": float("nan"),
+                "front_lateral_transfer_n": 0.0,
+                "rear_lateral_transfer_n": 0.0,
+                "longitudinal_load_transfer_n": 0.0,
+                "calibration_applied": bool(calibration_meta.get("calibration_applied", False)),
+                "calibration_model_id": str(calibration_meta.get("calibration_model_id", "")),
+                "converged": True,
+                "iterations": 1,
+                "solver_message": "sequential_axle_model_v1",
+                "arb_model_note": str(platform_params.get("arb_model_note", "")),
+                "mr_mode": "nonlinear_curve_per_step_v1" if isinstance(mr_curve_front, dict) and isinstance(mr_curve_rear, dict) else "linear_constant_json_v1_fallback",
+                "damper_used": False,
+                "fuel_cg_shift_enabled": False,
+                "lltd_used_as_solver_input": False,
+                "kz_front_eq_npm": float(kz_front),
+                "kz_rear_eq_npm": float(kz_rear),
+                "front_mr_dzw_ds": float(mr_front_now),
+                "rear_mr_dzw_ds": float(mr_rear_now),
+                "kphi_front_eq_npm": float("nan"),
+                "kphi_rear_eq_npm": float("nan"),
+                "travel_limit_front_compression_mm": float(_safe_float(platform_params.get("front_max_compression_m", np.nan), np.nan) * 1000.0),
+                "travel_limit_rear_compression_mm": float(_safe_float(platform_params.get("rear_max_compression_m", np.nan), np.nan) * 1000.0),
+                "travel_limit_front_droop_mm": float(_safe_float(platform_params.get("front_max_droop_m", np.nan), np.nan) * 1000.0),
+                "travel_limit_rear_droop_mm": float(_safe_float(platform_params.get("rear_max_droop_m", np.nan), np.nan) * 1000.0),
+                "hRideF_min_mm": float(hf_min * 1000.0),
+                "hRideF_max_mm": float(hf_max * 1000.0),
+                "hRideR_min_mm": float(hr_min * 1000.0),
+                "hRideR_max_mm": float(hr_max * 1000.0),
+                "travel_limit_source": str(platform_params.get("travel_limit_source", "")),
+                "front_rocker_s_m": _json_scalar(s_front_now_m),
+                "rear_rocker_s_m": _json_scalar(s_rear_now_m),
+                "front_rocker_limit_hit": bool(front_rocker_hit),
+                "rear_rocker_limit_hit": bool(rear_rocker_hit),
+                "front_rocker_limit_type": str(front_rocker_limit_type),
+                "rear_rocker_limit_type": str(rear_rocker_limit_type),
+                "travel_saturation_count": int(
+                    front_rocker_hit
+                    or rear_rocker_hit
+                    or (h_new_f <= hf_min + 1e-12)
+                    or (h_new_f >= hf_max - 1e-12)
+                    or (h_new_r <= hr_min + 1e-12)
+                    or (h_new_r >= hr_max - 1e-12)
+                ),
+                "x_value": float(xv),
+                "y_value": float(yv) if y_variable is not None else None,
+            }
+            rows.append(row)
+            h_prev_f = h_new_f
+            h_prev_r = h_new_r
+
     rows, hard_bound_corrections = _platform_apply_hard_ride_height_bounds(rows)
-
     metric_candidates = [
         "front_platform_travel_mm",
         "rear_platform_travel_mm",
         "body_heave_mm",
-        "body_heave_compression_mm",
         "body_pitch_deg",
         "body_roll_deg",
         "hRideF_mm",
@@ -3778,6 +4384,14 @@ def _compute_platform_explorer_grid(
         "rear_aero_load_n",
         "cg_z_mm",
         "roll_axis_height_at_cg_mm",
+        "front_mr_dzw_ds",
+        "rear_mr_dzw_ds",
+        "fz_fl_n",
+        "fz_fr_n",
+        "fz_rl_n",
+        "fz_rr_n",
+        "front_axle_load_n",
+        "rear_axle_load_n",
         "elastic_roll_distribution_front_pct",
         "lltd_total_front_pct",
     ]
@@ -3792,18 +4406,18 @@ def _compute_platform_explorer_grid(
             "point_count": int(len(rows)),
         },
         "available_visual_fields": metric_candidates,
-        "default_visual_field": "body_heave_mm",
+        "default_visual_field": "hRideF_mm",
         "summary": {
-            "converged_points": int(converged_count),
+            "converged_points": int(len(rows)),
             "total_points": int(len(rows)),
-            "jump_refined_points": int(jump_refined_points),
+            "jump_refined_points": 0,
             "elapsed_s": float(max(0.0, time.perf_counter() - t0)),
-            "solver_mode": str(fixed.get("solver_mode", "fast")),
-            "parallel_enabled": bool(enable_parallel),
-            "workers_used": int(workers if enable_parallel else 1),
-            "speed_guard_corrections": int(speed_guard_corrections),
-            "local_window_refined_points": int(local_window_refined_points),
-            "soft_limiter_corrections": int(soft_limiter_corrections),
+            "solver_mode": "sequential_axle_model_v1",
+            "parallel_enabled": False,
+            "workers_used": 1,
+            "speed_guard_corrections": 0,
+            "local_window_refined_points": 0,
+            "soft_limiter_corrections": 0,
             "hard_bound_corrections": int(hard_bound_corrections),
         },
         "calibration": _json_clean(calibration_meta),
@@ -4119,7 +4733,11 @@ def _build_setup_overview(json_data: dict) -> Dict[str, object]:
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    resp = make_response(render_template("index.html"))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 @app.route("/api/health")
@@ -4347,7 +4965,15 @@ def platform_explorer_run():
             raise ValueError("Could not build calibrated geometry.")
 
         base_geometry = compute_center_antis_for_state(calibrated, hf=0.0, rf=0.0, hr=0.0, rr=0.0, state_cache={})
-        platform_params = _extract_platform_solver_parameters_from_json(calibrated)
+        platform_params = _extract_platform_solver_parameters_from_json(
+            calibrated_json_data=calibrated,
+            base_json_data=json_data,
+            current_json_data=calibrated,
+        )
+        platform_params["mr_curves"] = _get_or_build_platform_mr_curves(
+            calibrated_json_data=calibrated,
+            force_rebuild=bool(body.get("force_rebuild_mr", False)),
+        )
         platform_params["base_geometry"] = base_geometry
         platform_params["base_front_track_mm"] = _safe_float(base_geometry.get("front_track_mm", 1200.0), 1200.0)
         platform_params["base_rear_track_mm"] = _safe_float(base_geometry.get("rear_track_mm", 1200.0), 1200.0)
